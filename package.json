@@ -1,6 +1,6 @@
 {
   "name": "circuit-json-to-footprinter",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Discover the tscircuit/footprinter string that best matches Circuit JSON PCB pads",
   "type": "module",
   "main": "dist/index.js",
@@ -12,7 +12,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup lib/index.ts --format esm --dts",
     "format": "biome check --write .",
@@ -24,7 +26,13 @@
     "type": "git",
     "url": "git+https://github.com/tscircuit/circuit-json-to-footprinter.git"
   },
-  "keywords": ["circuit-json", "footprint", "footprinter", "pcb", "tscircuit"],
+  "keywords": [
+    "circuit-json",
+    "footprint",
+    "footprinter",
+    "pcb",
+    "tscircuit"
+  ],
   "license": "MIT",
   "dependencies": {
     "@tscircuit/footprinter": "^0.0.374",
