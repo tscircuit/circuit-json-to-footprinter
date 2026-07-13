@@ -19,11 +19,9 @@ export const renderFootprintToCircuitJson = async (
 }
 
 export const expectFootprintRecovery = async ({
-  name,
   FootprintComponent,
   sourceHints,
 }: {
-  name: string
   FootprintComponent: () => React.JSX.Element
   sourceHints: string[]
 }) => {
@@ -32,15 +30,6 @@ export const expectFootprintRecovery = async ({
     maxCandidates: 5,
     sourceHints,
   })
-
-  console.log(
-    name,
-    result.candidates.map((candidate) => ({
-      family: candidate.family,
-      footprinterString: candidate.footprinterString,
-      iou: candidate.copperIntersectionOverUnion,
-    })),
-  )
 
   expect(result.best).not.toBeNull()
   expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)

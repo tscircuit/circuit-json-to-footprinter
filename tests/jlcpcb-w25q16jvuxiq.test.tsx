@@ -92,7 +92,6 @@ test("renders C2843335 TSX to Circuit JSON with core", async () => {
 
 test.failing("recovers C2843335 W25Q16JVUXIQ", async () => {
   await expectFootprintRecovery({
-    name: "C2843335 W25Q16JVUXIQ",
     FootprintComponent: W25Q16JVUXIQ,
     sourceHints: ["C2843335 W25Q16JVUXIQ USON-8 exposed pad"],
   })

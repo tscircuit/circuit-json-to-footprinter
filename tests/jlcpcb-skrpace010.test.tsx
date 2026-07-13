@@ -50,9 +50,8 @@ test("renders C139797 TSX to Circuit JSON with core", async () => {
   expect(await renderFootprintToCircuitJson(SKRPACE010)).toHaveLength(4)
 })
 
-test.failing("recovers C139797 SKRPACE010", async () => {
+test("recovers C139797 SKRPACE010", async () => {
   await expectFootprintRecovery({
-    name: "C139797 SKRPACE010",
     FootprintComponent: SKRPACE010,
     sourceHints: ["C139797 SKRPACE010 SMD tactile switch 4 pad"],
   })

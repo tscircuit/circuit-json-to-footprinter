@@ -170,7 +170,6 @@ test("renders C2765186 TSX to Circuit JSON with core", async () => {
 
 test.failing("recovers C2765186 TYPE_C_16PIN_2MD_073_", async () => {
   await expectFootprintRecovery({
-    name: "C2765186 TYPE_C_16PIN_2MD_073_",
     FootprintComponent: TypeC16Pin2md073,
     sourceHints: ["C2765186 USB Type-C 16 pin connector SMD through-hole"],
   })

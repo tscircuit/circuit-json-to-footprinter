@@ -60,7 +60,6 @@ test("renders C23380830 TSX to Circuit JSON with core", async () => {
 
 test.failing("recovers C23380830 AP2112K_3_3TRG1", async () => {
   await expectFootprintRecovery({
-    name: "C23380830 AP2112K_3_3TRG1",
     FootprintComponent: AP2112K,
     sourceHints: ["C23380830 AP2112K-3.3TRG1 SOT-23-5"],
   })

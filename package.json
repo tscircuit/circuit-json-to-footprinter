@@ -16,6 +16,7 @@
     "dist"
   ],
   "scripts": {
+    "audit:jlc": "bun run scripts/audit-jlc-stock.ts",
     "build": "tsup lib/index.ts --format esm --dts",
     "format": "biome check --write .",
     "format:check": "biome check .",

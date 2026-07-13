@@ -173,7 +173,11 @@ const getPitchEstimate = (pads: PreviewPad[], tolerance: number) => {
   }
 
   if (!differences.length) return Math.max(tolerance * 2, 1)
-  return median(differences)
+  // Two-sided packages contribute both the lead pitch and the much larger
+  // distance between rows. Prefer the lower quartile so the row span does not
+  // pull the pitch estimate away from the repeated lead spacing.
+  const sortedDifferences = differences.toSorted((left, right) => left - right)
+  return sortedDifferences[Math.floor((sortedDifferences.length - 1) * 0.25)]
 }
 
 const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
