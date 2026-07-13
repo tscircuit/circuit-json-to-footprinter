@@ -41,7 +41,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",
+    "@tscircuit/core": "^0.0.1437",
     "@types/bun": "latest",
+    "easyeda": "^0.0.269",
+    "tscircuit": "^0.0.2067",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3"
   }
