@@ -1,0 +1,15 @@
+node_modules
+dist
+*.tgz
+coverage
+*.lcov
+*.log
+.env*
+!.env.example
+*.tsbuildinfo
+.cache
+.DS_Store
+.idea
+.vscode
+.cursor
+bun.lock
