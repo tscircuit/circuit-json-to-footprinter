@@ -1,0 +1,177 @@
+import { expect, test } from "bun:test"
+import {
+  expectFootprintRecovery,
+  renderFootprintToCircuitJson,
+} from "./jlcpcb-reproduction-utils.js"
+
+const TypeC16Pin2md073 = () => (
+  <chip
+    name="J1"
+    footprint={
+      <footprint>
+        <platedhole
+          pcbX="-2.889885mm"
+          pcbY="1.05492555mm"
+          holeDiameter="0.700024mm"
+          outerDiameter={0.700024}
+          shape="circle"
+        />
+        <platedhole
+          pcbX="2.890139mm"
+          pcbY="1.05492555mm"
+          holeDiameter="0.700024mm"
+          outerDiameter={0.700024}
+          shape="circle"
+        />
+        <platedhole
+          portHints={["pin13"]}
+          pcbX="-4.324985mm"
+          pcbY="1.57511755mm"
+          holeWidth="0.5999988mm"
+          holeHeight="1.499997mm"
+          outerWidth="1.0999978mm"
+          outerHeight="1.999996mm"
+          shape="pill"
+        />
+        <platedhole
+          portHints={["pin14"]}
+          pcbX="4.324985mm"
+          pcbY="1.57511755mm"
+          holeWidth="0.5999988mm"
+          holeHeight="1.499997mm"
+          outerWidth="1.0999978mm"
+          outerHeight="1.999996mm"
+          shape="pill"
+        />
+        <platedhole
+          portHints={["pin15"]}
+          pcbX="-4.324985mm"
+          pcbY="-2.62502645mm"
+          holeWidth="0.5999988mm"
+          holeHeight="1.1999976mm"
+          outerWidth="1.1999976mm"
+          outerHeight="1.7999964mm"
+          shape="pill"
+        />
+        <platedhole
+          portHints={["pin16"]}
+          pcbX="4.324985mm"
+          pcbY="-2.62502645mm"
+          holeWidth="0.5999988mm"
+          holeHeight="1.1999976mm"
+          outerWidth="1.1999976mm"
+          outerHeight="1.7999964mm"
+          shape="pill"
+        />
+        <smtpad
+          portHints={["pin17"]}
+          pcbX="-3.200019mm"
+          pcbY="2.12502755mm"
+          width="0.5500116mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin18"]}
+          pcbX="-2.399919mm"
+          pcbY="2.12502755mm"
+          width="0.5500116mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin19"]}
+          pcbX="-1.749933mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin20"]}
+          pcbX="-1.249807mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin21"]}
+          pcbX="-0.749935mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin22"]}
+          pcbX="-0.250063mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin23"]}
+          pcbX="0.250063mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin24"]}
+          pcbX="0.749935mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin25"]}
+          pcbX="1.250061mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin26"]}
+          pcbX="1.750187mm"
+          pcbY="2.12502755mm"
+          width="0.2999994mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin27"]}
+          pcbX="2.400173mm"
+          pcbY="2.12502755mm"
+          width="0.5500116mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin28"]}
+          pcbX="3.200019mm"
+          pcbY="2.12502755mm"
+          width="0.5500116mm"
+          height="1.0999978mm"
+          shape="rect"
+        />
+      </footprint>
+    }
+  />
+)
+
+test("renders C2765186 TSX to Circuit JSON with core", async () => {
+  expect(await renderFootprintToCircuitJson(TypeC16Pin2md073)).toHaveLength(18)
+})
+
+test.failing("recovers C2765186 TYPE_C_16PIN_2MD_073_", async () => {
+  await expectFootprintRecovery({
+    name: "C2765186 TYPE_C_16PIN_2MD_073_",
+    FootprintComponent: TypeC16Pin2md073,
+    sourceHints: ["C2765186 USB Type-C 16 pin connector SMD through-hole"],
+  })
+})
