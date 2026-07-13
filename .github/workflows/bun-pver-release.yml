@@ -29,7 +29,9 @@ jobs:
           GITHUB_TOKEN: "${{ secrets.TSCIRCUIT_BOT_GITHUB_TOKEN }}"
       - name: Get package version
         id: package-version
-        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Create version bump pull request
         id: create-pr
         uses: peter-evans/create-pull-request@v6
