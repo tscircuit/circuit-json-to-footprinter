@@ -61,3 +61,11 @@ test("rejects Circuit JSON without PCB pads", () => {
     ] as AnyCircuitElement[]),
   ).toThrow("at least one PCB SMT pad or plated hole")
 })
+
+test("accepts readonly Circuit JSON", () => {
+  const circuitJson: readonly AnyCircuitElement[] =
+    circuitJsonFromFootprinter("0402")
+  const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 1 })
+
+  expect(result.best).not.toBeNull()
+})

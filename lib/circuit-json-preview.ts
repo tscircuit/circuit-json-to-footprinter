@@ -76,7 +76,7 @@ const getCornerRadius = (
 }
 
 export const circuitJsonToPreview = (
-  circuitJson: AnyCircuitElement[],
+  circuitJson: readonly AnyCircuitElement[],
   options: CircuitJsonPreviewOptions = {},
 ): FootprintPreview => {
   const pads = circuitJson.flatMap((rawElement, index): PreviewPad[] => {

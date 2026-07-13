@@ -24,7 +24,7 @@ export interface CircuitJsonToFootprinterOptions {
 }
 
 export const circuitJsonToFootprinter = (
-  circuitJson: AnyCircuitElement[],
+  circuitJson: readonly AnyCircuitElement[],
   options: CircuitJsonToFootprinterOptions = {},
 ): FootprinterDiscoveryResult => {
   const target = circuitJsonToPreview(circuitJson, options)
