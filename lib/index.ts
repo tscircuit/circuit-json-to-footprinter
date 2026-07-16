@@ -7,6 +7,7 @@ import {
 
 export type {
   FootprintPreview,
+  PreviewHole,
   PreviewPad,
   PreviewPadKind,
   PreviewPadShape,

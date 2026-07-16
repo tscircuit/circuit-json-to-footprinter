@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test"
 import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
+import {
+  circuitJsonToPreview,
+  footprinterStringToPreview,
+} from "../lib/circuit-json-preview.js"
+import { summarizeCopperComparison } from "../lib/compare-copper.js"
 import { circuitJsonToFootprinter } from "../lib/index.js"
 
 const circuitJsonFromFootprinter = (footprinterString: string) =>
@@ -68,4 +73,73 @@ test("accepts readonly Circuit JSON", () => {
   const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 1 })
 
   expect(result.best).not.toBeNull()
+})
+
+test("compares plated-hole drill geometry separately from copper", () => {
+  const smallerHole = footprinterStringToPreview(
+    "pinrow2_p2.54mm_id0.7mm_od1.6mm",
+  )
+  const largerHole = footprinterStringToPreview(
+    "pinrow2_p2.54mm_id1.1mm_od1.6mm",
+  )
+
+  expect(summarizeCopperComparison(smallerHole, smallerHole)).toEqual({
+    copperIntersectionOverUnion: 1,
+    holeIntersectionOverUnion: 1,
+  })
+
+  const mismatch = summarizeCopperComparison(smallerHole, largerHole)
+  expect(mismatch.copperIntersectionOverUnion).toBe(1)
+  expect(mismatch.holeIntersectionOverUnion).toBeLessThan(0.5)
+})
+
+test("recovers plated-hole inner diameter", () => {
+  const result = circuitJsonToFootprinter(
+    circuitJsonFromFootprinter("pinrow2_p2.54mm_id0.7mm_od1.6mm"),
+    { maxCandidates: 3, sourceHints: ["pinrow header"] },
+  )
+
+  expect(result.best?.family).toBe("pinrow")
+  expect(result.best?.footprinterString).toContain("id0.7mm")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+  expect(result.best?.holeIntersectionOverUnion).toBeGreaterThan(0.99)
+  expect(result.target.pads.every((pad) => pad.hole?.width === 0.7)).toBe(true)
+})
+
+test("preserves offset and rotation for slotted plated holes", () => {
+  const preview = circuitJsonToPreview([
+    {
+      type: "pcb_plated_hole",
+      shape: "rotated_pill_hole_with_rect_pad",
+      pcb_plated_hole_id: "slot_1",
+      x: 2,
+      y: 3,
+      hole_shape: "rotated_pill",
+      hole_width: 0.6,
+      hole_height: 1.4,
+      hole_ccw_rotation: 45,
+      hole_offset_x: 0.2,
+      hole_offset_y: -0.1,
+      pad_shape: "rect",
+      rect_pad_width: 1.5,
+      rect_pad_height: 2.2,
+      rect_ccw_rotation: 15,
+      layers: ["top", "bottom"],
+    } as AnyCircuitElement,
+  ])
+
+  expect(preview.pads[0]).toMatchObject({
+    height: 2.2,
+    rotation: 15,
+    shape: "rect",
+    width: 1.5,
+    hole: {
+      height: 1.4,
+      offsetX: 0.2,
+      offsetY: -0.1,
+      rotation: 45,
+      shape: "pill",
+      width: 0.6,
+    },
+  })
 })

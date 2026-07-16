@@ -2,6 +2,7 @@ import { getFootprintNames, getFootprintSizes } from "@tscircuit/footprinter"
 import {
   type FootprintPreview,
   footprinterStringToPreview,
+  type PreviewHole,
   type PreviewPad,
 } from "./circuit-json-preview.js"
 import { summarizeCopperComparison } from "./compare-copper.js"
@@ -61,6 +62,7 @@ export interface FootprinterDiscoveryCandidate {
   family: string
   footprinterString: string
   geometryScore: number
+  holeIntersectionOverUnion: number
   optimizedParameters: Partial<Record<NumericParameter, number>>
   rankingScore: number
 }
@@ -258,6 +260,10 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
   const medianPadDiameter = median(
     padBounds.map((bound) => Math.sqrt(bound.width * bound.height)),
   )
+  const holeDiameters = target.pads.flatMap((pad) =>
+    pad.hole ? [Math.sqrt(pad.hole.width * pad.hole.height)] : [],
+  )
+  const medianHoleDiameter = median(holeDiameters) || medianPadDiameter * 0.6
   const platedHoleCount = target.pads.filter(
     (pad) => pad.kind === "plated-hole",
   ).length
@@ -270,7 +276,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     heuristics: {
       ball: medianPadDiameter,
       h: bounds.height + insetQuadAdjustment,
-      id: medianPadDiameter * 0.6,
+      id: medianHoleDiameter,
       od: medianPadDiameter,
       p: pitch,
       pad: medianPadDiameter,
@@ -302,6 +308,16 @@ const normalizePads = (pads: PreviewPad[]) => {
 const getOrientedPadSize = (pad: PreviewPad) => {
   const bounds = getPadBounds({ ...pad, x: 0, y: 0 })
   return { height: bounds.height, width: bounds.width }
+}
+
+const getOrientedHoleSize = (hole: PreviewHole) => {
+  const radians = (hole.rotation * Math.PI) / 180
+  const cosine = Math.abs(Math.cos(radians))
+  const sine = Math.abs(Math.sin(radians))
+  return {
+    height: hole.width * sine + hole.height * cosine,
+    width: hole.width * cosine + hole.height * sine,
+  }
 }
 
 const matchPadsByPosition = (left: PreviewPad[], right: PreviewPad[]) => {
@@ -356,6 +372,34 @@ const getGeometryLoss = (
     loss += dx * dx * 4 + dy * dy * 4 + dw * dw + dh * dh
     if (candidatePad.kind !== targetPad.kind) loss += 4
     if (candidatePad.shape !== targetPad.shape) loss += 0.08
+
+    if (candidatePad.hole && targetPad.hole) {
+      const candidateHoleSize = getOrientedHoleSize(candidatePad.hole)
+      const targetHoleSize = getOrientedHoleSize(targetPad.hole)
+      const holePositionScale = Math.max(
+        targetHoleSize.width,
+        targetHoleSize.height,
+        0.05,
+      )
+      const holeDx =
+        (candidatePad.hole.offsetX - targetPad.hole.offsetX) / holePositionScale
+      const holeDy =
+        (candidatePad.hole.offsetY - targetPad.hole.offsetY) / holePositionScale
+      const holeDw =
+        (candidateHoleSize.width - targetHoleSize.width) /
+        Math.max(targetHoleSize.width, 0.05)
+      const holeDh =
+        (candidateHoleSize.height - targetHoleSize.height) /
+        Math.max(targetHoleSize.height, 0.05)
+      loss +=
+        holeDx * holeDx * 2 +
+        holeDy * holeDy * 2 +
+        holeDw * holeDw +
+        holeDh * holeDh
+      if (candidatePad.hole.shape !== targetPad.hole.shape) loss += 0.08
+    } else if (candidatePad.hole || targetPad.hole) {
+      loss += 4
+    }
   }
 
   return loss / pairs.length
@@ -425,7 +469,21 @@ const buildParameterizedString = (
 const geometrySignature = (preview: FootprintPreview) =>
   preview.pads
     .map((pad) =>
-      [pad.kind, pad.shape, pad.x, pad.y, pad.width, pad.height, pad.rotation]
+      [
+        pad.kind,
+        pad.shape,
+        pad.x,
+        pad.y,
+        pad.width,
+        pad.height,
+        pad.rotation,
+        pad.hole?.shape,
+        pad.hole?.width,
+        pad.hole?.height,
+        pad.hole?.offsetX,
+        pad.hole?.offsetY,
+        pad.hole?.rotation,
+      ]
         .map(String)
         .join(":"),
     )
@@ -720,11 +778,13 @@ export const discoverFootprinterString = (
   )
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): FootprinterDiscoveryCandidate => {
-      const copperIntersectionOverUnion = summarizeCopperComparison(
+      const comparison = summarizeCopperComparison(
         candidate.preview,
         target,
         SEARCH_GRID_SIZE,
-      ).copperIntersectionOverUnion
+      )
+      const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
+        comparison
       const domainScore = getDomainScore(target, candidate.family)
       return {
         copperIntersectionOverUnion,
@@ -732,19 +792,24 @@ export const discoverFootprinterString = (
         family: candidate.family,
         footprinterString: candidate.footprinterString,
         geometryScore: candidate.geometryScore,
+        holeIntersectionOverUnion,
         optimizedParameters:
           "optimizedParameters" in candidate
             ? (candidate.optimizedParameters as Partial<
                 Record<NumericParameter, number>
               >)
             : {},
-        rankingScore: copperIntersectionOverUnion + domainScore * 0.08,
+        rankingScore:
+          copperIntersectionOverUnion +
+          (analysis.platedHoleCount > 0 ? holeIntersectionOverUnion : 0) +
+          domainScore * 0.08,
       }
     })
     .sort(
       (left, right) =>
         right.rankingScore - left.rankingScore ||
         right.copperIntersectionOverUnion - left.copperIntersectionOverUnion ||
+        right.holeIntersectionOverUnion - left.holeIntersectionOverUnion ||
         right.domainScore - left.domainScore ||
         right.geometryScore - left.geometryScore ||
         left.footprinterString.length - right.footprinterString.length,

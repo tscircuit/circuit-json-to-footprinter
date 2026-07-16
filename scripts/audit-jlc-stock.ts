@@ -63,6 +63,7 @@ const auditCategory = async (category: string) => {
     padCount: result.diagnostics.targetPadCount,
     footprinterString: result.best?.footprinterString ?? "NO CANDIDATE",
     copperIoU: result.best?.copperIntersectionOverUnion ?? 0,
+    holeIoU: result.best?.holeIntersectionOverUnion ?? 0,
   }
 }
 
@@ -81,6 +82,7 @@ console.table(
     pads: result.padCount,
     footprinter: result.footprinterString,
     copperIoU: result.copperIoU.toFixed(4),
+    holeIoU: result.holeIoU.toFixed(4),
   })),
 )
 

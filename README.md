@@ -2,7 +2,7 @@
 
 Discover the parameterized [`@tscircuit/footprinter`](https://github.com/tscircuit/footprinter) string that best represents the PCB pads in Circuit JSON.
 
-The search combines footprint-family heuristics with continuous optimization of dimensions such as pitch, body width, pad width, pad length, and thermal-pad size. Candidates are ranked using copper intersection-over-union and optional domain hints.
+The search combines footprint-family heuristics with continuous optimization of dimensions such as pitch, body width, pad width, pad length, plated-hole size, and thermal-pad size. Candidates are ranked using copper and hole intersection-over-union plus optional domain hints.
 
 ## Install
 
@@ -24,7 +24,7 @@ console.log(result.best?.footprinterString)
 // qfn56_thermalpad3.1mmx3.1mm_p0.4mm_w7mm_h7mm_pw0.2mm_pl0.85mm
 ```
 
-The result includes the best match, ranked alternatives, geometry scores, copper IoU, optimized parameters, and search diagnostics. The input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
+The result includes the best match, ranked alternatives, geometry scores, separate `copperIntersectionOverUnion` and `holeIntersectionOverUnion` scores, optimized parameters, and search diagnostics. Hole IoU is `1` when both footprints contain no holes. The input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
 
 ## Development
 
