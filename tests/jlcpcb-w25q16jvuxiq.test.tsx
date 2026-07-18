@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import {
   expectFootprintRecovery,
   renderFootprintToCircuitJson,
-} from "./jlcpcb-reproduction-utils.js"
+} from "./fixture/jlcpcb-reproduction-utils.js"
 
 const W25Q16JVUXIQ = () => (
   <chip
@@ -90,9 +90,12 @@ test("renders C2843335 TSX to Circuit JSON with core", async () => {
   expect(await renderFootprintToCircuitJson(W25Q16JVUXIQ)).toHaveLength(9)
 })
 
-test.failing("recovers C2843335 W25Q16JVUXIQ", async () => {
-  await expectFootprintRecovery({
+test("recovers C2843335 W25Q16JVUXIQ", async () => {
+  const result = await expectFootprintRecovery({
     FootprintComponent: W25Q16JVUXIQ,
     sourceHints: ["C2843335 W25Q16JVUXIQ USON-8 exposed pad"],
   })
+
+  expect(result.best?.family).toBe("wson")
+  expect(result.best?.footprinterString).toBe("wson")
 })

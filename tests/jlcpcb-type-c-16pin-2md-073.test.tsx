@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import {
   expectFootprintRecovery,
   renderFootprintToCircuitJson,
-} from "./jlcpcb-reproduction-utils.js"
+} from "./fixture/jlcpcb-reproduction-utils.js"
 
 const TypeC16Pin2md073 = () => (
   <chip
