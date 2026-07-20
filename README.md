@@ -21,14 +21,19 @@ const result = circuitJsonToFootprinter(circuitJson, {
 })
 
 console.log(result.best?.footprinterString)
-// qfn56_thermalpad3.1mmx3.1mm_p0.4mm_w7mm_h7mm_pw0.2mm_pl0.85mm_pin1location(topside,left)
+// qfn56_thermalpad3.1mmx3.1mm_p0.4mm_w7mm_h7mm_pw0.2mm_pl0.85mm
 ```
 
 The result includes the best self-contained footprinter string, ranked alternatives,
 geometry scores, copper IoU, optimized parameters, and search diagnostics. When a
 match requires rotation, its string includes a `pin1location(...)` modifier; no
-separate `pcbRotation` is emitted. The input must contain at least one `pcb_smtpad`
-or `pcb_plated_hole` element.
+separate `pcbRotation` is emitted. The modifier names the edge containing pin 1,
+then its alignment along that edge. For example, `pin1location(leftside,top)` means
+pin 1 is on the left edge near the top, as in JLCPCB's RP2040 footprint. The base
+QFN string above already has that orientation, so it needs no modifier. This is
+different from `pin1location(topside,left)`, which places pin 1 on the top edge near
+the left and cannot be produced from the RP2040 orientation by rotation alone. The
+input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
 
 ## Development
 
