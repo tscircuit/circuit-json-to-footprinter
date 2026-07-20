@@ -378,6 +378,7 @@ const getDomainScore = (target: FootprintPreview, family: string) => {
     soic: ["soic", "so-"],
     ssop: ["ssop"],
     tssop: ["tssop"],
+    usbcmidmount: ["usb-c", "usb c", "type-c", "type c", "usbc"],
   }
   const terms = aliases[family] ?? [family]
   return terms.some((term) => description.includes(term)) ? 1 : 0
@@ -441,6 +442,7 @@ const getPreferredFamilies = (analysis: TargetAnalysis) => {
       "radial",
       "to220",
       "to92",
+      "usbcmidmount",
     ])
   }
   if (analysis.topology === "grid") return new Set(["bga"])
@@ -471,7 +473,8 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
 
   for (const family of getFootprintNames()) {
     seeds.add(`${family}${padCount}`)
-    seeds.add(family)
+    // Mid-mount USB-C variants are named by their explicit 16-pin form.
+    if (family !== "usbcmidmount") seeds.add(family)
   }
 
   if (analysis.thermalPad && analysis.perimeterPadCount > 0) {
@@ -488,6 +491,16 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
 
   if (analysis.topology === "grid") {
     seeds.add(`bga${padCount}_grid${analysis.gridColumns}x${analysis.gridRows}`)
+  }
+
+  if (analysis.topology === "two-sided" && padCount % 2 === 1) {
+    for (
+      let missingPosition = 1;
+      missingPosition <= padCount + 1;
+      missingPosition += 1
+    ) {
+      seeds.add(`dfn${padCount + 1}_missing(${missingPosition})`)
+    }
   }
 
   if (padCount === 2 && analysis.platedHoleCount === 0) {
@@ -521,10 +534,18 @@ const selectSeedsToOptimize = (
   const preferredFamilies = getPreferredFamilies(analysis)
   for (const family of preferredFamilies) {
     const candidate =
+      (family === "dfn"
+        ? candidates.find(
+            (entry) =>
+              entry.family === family &&
+              entry.footprinterString.includes("_missing("),
+          )
+        : undefined) ??
       candidates.find(
         (entry) =>
           entry.family === family && entry.footprinterString === family,
-      ) ?? candidates.find((entry) => entry.family === family)
+      ) ??
+      candidates.find((entry) => entry.family === family)
     if (candidate) selected.set(candidate.footprinterString, candidate)
     if (selected.size >= MAX_OPTIMIZED_SEEDS) break
   }

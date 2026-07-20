@@ -104,10 +104,17 @@ export const circuitJsonToPreview = (
     }
     if (element.type === "pcb_plated_hole") {
       const width = toNumber(
-        element.width ?? element.outer_diameter ?? element.outerDiameter,
+        element.outer_width ??
+          element.outerWidth ??
+          element.width ??
+          element.outer_diameter ??
+          element.outerDiameter,
         0.6,
       )
-      const height = toNumber(element.height, width)
+      const height = toNumber(
+        element.outer_height ?? element.outerHeight ?? element.height,
+        width,
+      )
       return [
         {
           cornerRadius: getCornerRadius(element, width, height),

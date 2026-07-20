@@ -58,9 +58,12 @@ test("renders C23380830 TSX to Circuit JSON with core", async () => {
   expect(await renderFootprintToCircuitJson(AP2112K)).toHaveLength(5)
 })
 
-test.failing("recovers C23380830 AP2112K_3_3TRG1", async () => {
-  await expectFootprintRecovery({
+test("recovers C23380830 AP2112K_3_3TRG1", async () => {
+  const result = await expectFootprintRecovery({
     FootprintComponent: AP2112K,
     sourceHints: ["C23380830 AP2112K-3.3TRG1 SOT-23-5"],
   })
+
+  expect(result.best?.family).toBe("dfn")
+  expect(result.best?.footprinterString).toContain("dfn6_missing(2)")
 })

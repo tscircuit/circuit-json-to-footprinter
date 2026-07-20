@@ -10,20 +10,6 @@ const TypeC16Pin2md073 = () => (
     footprint={
       <footprint>
         <platedhole
-          pcbX="-2.889885mm"
-          pcbY="1.05492555mm"
-          holeDiameter="0.700024mm"
-          outerDiameter={0.700024}
-          shape="circle"
-        />
-        <platedhole
-          pcbX="2.890139mm"
-          pcbY="1.05492555mm"
-          holeDiameter="0.700024mm"
-          outerDiameter={0.700024}
-          shape="circle"
-        />
-        <platedhole
           portHints={["pin13"]}
           pcbX="-4.324985mm"
           pcbY="1.57511755mm"
@@ -165,12 +151,16 @@ const TypeC16Pin2md073 = () => (
 )
 
 test("renders C2765186 TSX to Circuit JSON with core", async () => {
-  expect(await renderFootprintToCircuitJson(TypeC16Pin2md073)).toHaveLength(18)
+  expect(await renderFootprintToCircuitJson(TypeC16Pin2md073)).toHaveLength(16)
 })
 
-test.failing("recovers C2765186 TYPE_C_16PIN_2MD_073_", async () => {
-  await expectFootprintRecovery({
+test("recovers C2765186 TYPE_C_16PIN_2MD_073_", async () => {
+  const result = await expectFootprintRecovery({
     FootprintComponent: TypeC16Pin2md073,
     sourceHints: ["C2765186 USB Type-C 16 pin connector SMD through-hole"],
   })
+
+  expect(result.best!.family).toBe("usbcmidmount")
+  expect(result.best!.footprinterString).toBe("usbcmidmount16")
+  expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.999)
 })
