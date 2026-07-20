@@ -19,6 +19,18 @@ test("recovers a parameterized dual-row footprint", () => {
   expect(result.best?.footprinterString).toContain("w6.2mm")
 })
 
+test("preserves pill-shaped pads when the footprint family supports them", () => {
+  const source = "soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm_pillpads"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.family).toBe("soic")
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
 test("produces an exact passive footprint string", () => {
   const source = "res_p1.3mm_pw0.55mm_ph0.7mm"
   const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {

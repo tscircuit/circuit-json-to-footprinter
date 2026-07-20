@@ -608,6 +608,19 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     }
   }
 
+  if (target.pads.some((pad) => pad.shape === "pill")) {
+    for (const seed of [...seeds]) {
+      const pillPadSeed = `${seed}_pillpads`
+      const preview = tryBuild(pillPadSeed)
+      if (
+        preview?.pads.length === padCount &&
+        preview.pads.some((pad) => pad.shape === "pill")
+      ) {
+        seeds.add(pillPadSeed)
+      }
+    }
+  }
+
   return [...seeds]
 }
 
