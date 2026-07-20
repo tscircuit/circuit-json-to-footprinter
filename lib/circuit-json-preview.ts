@@ -94,7 +94,7 @@ export const circuitJsonToPreview = (
           portHints: Array.isArray(element.port_hints)
             ? element.port_hints.map((hint) => normalizePortHint(String(hint)))
             : [],
-          rotation: toNumber(element.rotation),
+          rotation: toNumber(element.ccw_rotation ?? element.rotation),
           shape: normalizeShape(element.shape, width, height),
           width,
           x: toNumber(element.x),
@@ -129,7 +129,11 @@ export const circuitJsonToPreview = (
           portHints: Array.isArray(element.port_hints)
             ? element.port_hints.map((hint) => normalizePortHint(String(hint)))
             : [],
-          rotation: toNumber(element.rotation),
+          rotation: toNumber(
+            element.rect_ccw_rotation ??
+              element.ccw_rotation ??
+              element.rotation,
+          ),
           shape: normalizeShape(element.shape ?? "circle", width, height),
           width,
           x: toNumber(element.x),

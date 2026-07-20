@@ -21,10 +21,14 @@ const result = circuitJsonToFootprinter(circuitJson, {
 })
 
 console.log(result.best?.footprinterString)
-// qfn56_thermalpad3.1mmx3.1mm_p0.4mm_w7mm_h7mm_pw0.2mm_pl0.85mm
+// qfn56_thermalpad3.1mmx3.1mm_p0.4mm_w7mm_h7mm_pw0.2mm_pl0.85mm_pin1location(topside,left)
 ```
 
-The result includes the best match, ranked alternatives, geometry scores, copper IoU, optimized parameters, and search diagnostics. The input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
+The result includes the best self-contained footprinter string, ranked alternatives,
+geometry scores, copper IoU, optimized parameters, and search diagnostics. When a
+match requires rotation, its string includes a `pin1location(...)` modifier; no
+separate `pcbRotation` is emitted. The input must contain at least one `pcb_smtpad`
+or `pcb_plated_hole` element.
 
 ## Development
 

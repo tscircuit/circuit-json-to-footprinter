@@ -24,6 +24,22 @@ const NUMERIC_PARAMETERS = [
 
 type NumericParameter = (typeof NUMERIC_PARAMETERS)[number]
 type Topology = "four-sided" | "grid" | "irregular" | "linear" | "two-sided"
+type FootprintRotation = 0 | 90 | 180 | 270
+type Pin1Location =
+  | readonly ["bottomside" | "topside", "left" | "right"]
+  | readonly ["leftside" | "rightside", "bottom" | "top"]
+
+const FOOTPRINT_ROTATIONS: FootprintRotation[] = [0, 90, 180, 270]
+const PIN1_LOCATIONS: Pin1Location[] = [
+  ["leftside", "top"],
+  ["leftside", "bottom"],
+  ["rightside", "top"],
+  ["rightside", "bottom"],
+  ["topside", "left"],
+  ["topside", "right"],
+  ["bottomside", "left"],
+  ["bottomside", "right"],
+]
 
 interface Bounds {
   height: number
@@ -52,6 +68,7 @@ interface SeedCandidate {
   family: string
   footprinterString: string
   geometryScore: number
+  searchRotation: FootprintRotation
   preview: FootprintPreview
 }
 
@@ -63,6 +80,11 @@ export interface FootprinterDiscoveryCandidate {
   geometryScore: number
   optimizedParameters: Partial<Record<NumericParameter, number>>
   rankingScore: number
+}
+
+interface RankedDiscoveryCandidate extends FootprinterDiscoveryCandidate {
+  preview: FootprintPreview
+  searchRotation: FootprintRotation
 }
 
 export interface FootprinterDiscoveryResult {
@@ -299,6 +321,23 @@ const normalizePads = (pads: PreviewPad[]) => {
   }))
 }
 
+const rotateFootprint = (
+  footprint: FootprintPreview,
+  rotation: FootprintRotation,
+): FootprintPreview => {
+  if (rotation === 0) return footprint
+  const radians = (rotation * Math.PI) / 180
+  return {
+    ...footprint,
+    pads: footprint.pads.map((pad) => ({
+      ...pad,
+      rotation: (pad.rotation + rotation) % 360,
+      x: pad.x * Math.cos(radians) - pad.y * Math.sin(radians),
+      y: pad.x * Math.sin(radians) + pad.y * Math.cos(radians),
+    })),
+  }
+}
+
 const getOrientedPadSize = (pad: PreviewPad) => {
   const bounds = getPadBounds({ ...pad, x: 0, y: 0 })
   return { height: bounds.height, width: bounds.width }
@@ -356,6 +395,12 @@ const getGeometryLoss = (
     loss += dx * dx * 4 + dy * dy * 4 + dw * dw + dh * dh
     if (candidatePad.kind !== targetPad.kind) loss += 4
     if (candidatePad.shape !== targetPad.shape) loss += 0.08
+    if (
+      targetPad.portHints.length > 0 &&
+      !candidatePad.portHints.some((hint) => targetPad.portHints.includes(hint))
+    ) {
+      loss += 0.04
+    }
   }
 
   return loss / pairs.length
@@ -431,6 +476,50 @@ const geometrySignature = (preview: FootprintPreview) =>
         .join(":"),
     )
     .join("|")
+
+const areClose = (left: number, right: number) =>
+  Math.abs(left - right) <= 0.00001
+
+const haveSameOrientedPads = (
+  left: FootprintPreview,
+  right: FootprintPreview,
+) => {
+  if (left.pads.length !== right.pads.length) return false
+
+  return left.pads.every((leftPad, index) => {
+    const rightPad = right.pads[index]
+    if (!rightPad) return false
+    const leftSize = getOrientedPadSize(leftPad)
+    const rightSize = getOrientedPadSize(rightPad)
+    return (
+      leftPad.kind === rightPad.kind &&
+      leftPad.shape === rightPad.shape &&
+      leftPad.portHints.join("|") === rightPad.portHints.join("|") &&
+      areClose(leftPad.x, rightPad.x) &&
+      areClose(leftPad.y, rightPad.y) &&
+      areClose(leftSize.width, rightSize.width) &&
+      areClose(leftSize.height, rightSize.height)
+    )
+  })
+}
+
+const encodeOrientationInFootprinterString = (
+  footprinterString: string,
+  searchRotation: FootprintRotation,
+  orientedPreview: FootprintPreview,
+) => {
+  if (searchRotation === 0) return footprinterString
+
+  for (const [side, alignment] of PIN1_LOCATIONS) {
+    const orientedString = `${footprinterString}_pin1location(${side},${alignment})`
+    const preview = tryBuild(orientedString)
+    if (preview && haveSameOrientedPads(preview, orientedPreview)) {
+      return orientedString
+    }
+  }
+
+  return null
+}
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
   if (analysis.platedHoleCount > analysis.perimeterPadCount / 2) {
@@ -528,7 +617,10 @@ const selectSeedsToOptimize = (
 ) => {
   const selected = new Map<string, SeedCandidate>()
   for (const candidate of candidates.slice(0, 4)) {
-    selected.set(candidate.footprinterString, candidate)
+    selected.set(
+      `${candidate.footprinterString}:${candidate.searchRotation}`,
+      candidate,
+    )
   }
 
   const preferredFamilies = getPreferredFamilies(analysis)
@@ -546,7 +638,12 @@ const selectSeedsToOptimize = (
           entry.family === family && entry.footprinterString === family,
       ) ??
       candidates.find((entry) => entry.family === family)
-    if (candidate) selected.set(candidate.footprinterString, candidate)
+    if (candidate) {
+      selected.set(
+        `${candidate.footprinterString}:${candidate.searchRotation}`,
+        candidate,
+      )
+    }
     if (selected.size >= MAX_OPTIMIZED_SEEDS) break
   }
 
@@ -567,10 +664,13 @@ const findActiveParameters = (
         [parameter]: heuristic,
       }),
     )
+    const orientedPreview = preview
+      ? rotateFootprint(preview, seed.searchRotation)
+      : null
     if (
-      preview &&
-      preview.pads.length === seed.preview.pads.length &&
-      geometrySignature(preview) !== baseSignature
+      orientedPreview &&
+      orientedPreview.pads.length === seed.preview.pads.length &&
+      geometrySignature(orientedPreview) !== baseSignature
     ) {
       active.push(parameter)
     }
@@ -602,8 +702,10 @@ const optimizeSeed = (
       seed.footprinterString,
       parameters,
     )
-    const preview = tryBuild(footprinterString)
-    if (!preview || preview.pads.length !== target.pads.length) {
+    const unrotatedPreview = tryBuild(footprinterString)
+    if (!unrotatedPreview) return null
+    const preview = rotateFootprint(unrotatedPreview, seed.searchRotation)
+    if (preview.pads.length !== target.pads.length) {
       return null
     }
     return {
@@ -688,9 +790,12 @@ const optimizeSeed = (
     const simplifiedPreview = tryBuild(
       buildParameterizedString(seed.footprinterString, withoutParameter),
     )
+    const orientedSimplifiedPreview = simplifiedPreview
+      ? rotateFootprint(simplifiedPreview, seed.searchRotation)
+      : null
     if (
-      simplifiedPreview &&
-      geometrySignature(simplifiedPreview) === bestSignature
+      orientedSimplifiedPreview &&
+      geometrySignature(orientedSimplifiedPreview) === bestSignature
     ) {
       delete simplifiedParameters[parameter]
     }
@@ -699,13 +804,17 @@ const optimizeSeed = (
     seed.footprinterString,
     simplifiedParameters,
   )
-  const simplifiedPreview = tryBuild(simplifiedString) ?? best.preview
+  const unrotatedSimplifiedPreview = tryBuild(simplifiedString)
+  const simplifiedPreview = unrotatedSimplifiedPreview
+    ? rotateFootprint(unrotatedSimplifiedPreview, seed.searchRotation)
+    : best.preview
 
   return {
     family: seed.family,
     footprinterString: simplifiedString,
     geometryScore: 1 / (1 + best.loss),
     optimizedParameters: simplifiedParameters,
+    searchRotation: seed.searchRotation,
     preview: simplifiedPreview,
   }
 }
@@ -717,30 +826,44 @@ export const discoverFootprinterString = (
   const analysis = analyzeTarget(target)
   const rawSeeds = generateSeeds(target, analysis)
   const seedCandidates = rawSeeds.flatMap((footprinterString) => {
-    const preview = tryBuild(footprinterString)
-    if (!preview || preview.pads.length !== target.pads.length) return []
-    const platedHoleCount = preview.pads.filter(
-      (pad) => pad.kind === "plated-hole",
-    ).length
-    if (platedHoleCount !== analysis.platedHoleCount) return []
+    const unrotatedPreview = tryBuild(footprinterString)
+    if (
+      !unrotatedPreview ||
+      unrotatedPreview.pads.length !== target.pads.length
+    ) {
+      return []
+    }
 
-    return [
-      {
-        family: getFamily(footprinterString),
-        footprinterString,
-        geometryScore: getGeometryScore(preview, target),
-        preview,
-      },
-    ]
+    return FOOTPRINT_ROTATIONS.flatMap((searchRotation): SeedCandidate[] => {
+      const preview = rotateFootprint(unrotatedPreview, searchRotation)
+      const platedHoleCount = preview.pads.filter(
+        (pad) => pad.kind === "plated-hole",
+      ).length
+      if (platedHoleCount !== analysis.platedHoleCount) return []
+
+      return [
+        {
+          family: getFamily(footprinterString),
+          footprinterString,
+          geometryScore: getGeometryScore(preview, target),
+          preview,
+          searchRotation,
+        },
+      ]
+    })
   })
-  seedCandidates.sort((left, right) => right.geometryScore - left.geometryScore)
+  seedCandidates.sort(
+    (left, right) =>
+      right.geometryScore - left.geometryScore ||
+      left.searchRotation - right.searchRotation,
+  )
 
   const selectedSeeds = selectSeedsToOptimize(seedCandidates, analysis)
   const optimized = selectedSeeds.map((seed) =>
     optimizeSeed(seed, target, analysis),
   )
   const allCandidates = [...optimized, ...seedCandidates]
-    .map((candidate): FootprinterDiscoveryCandidate => {
+    .map((candidate): RankedDiscoveryCandidate => {
       const copperIntersectionOverUnion = summarizeCopperComparison(
         candidate.preview,
         target,
@@ -759,7 +882,9 @@ export const discoverFootprinterString = (
                 Record<NumericParameter, number>
               >)
             : {},
+        preview: candidate.preview,
         rankingScore: copperIntersectionOverUnion + domainScore * 0.08,
+        searchRotation: candidate.searchRotation,
       }
     })
     .sort(
@@ -768,15 +893,29 @@ export const discoverFootprinterString = (
         right.copperIntersectionOverUnion - left.copperIntersectionOverUnion ||
         right.domainScore - left.domainScore ||
         right.geometryScore - left.geometryScore ||
+        left.searchRotation - right.searchRotation ||
         left.footprinterString.length - right.footprinterString.length,
     )
 
   const uniqueCandidates: FootprinterDiscoveryCandidate[] = []
   const seenStrings = new Set<string>()
   for (const candidate of allCandidates) {
-    if (seenStrings.has(candidate.footprinterString)) continue
-    seenStrings.add(candidate.footprinterString)
-    uniqueCandidates.push(candidate)
+    const orientedString = encodeOrientationInFootprinterString(
+      candidate.footprinterString,
+      candidate.searchRotation,
+      candidate.preview,
+    )
+    if (!orientedString || seenStrings.has(orientedString)) continue
+    seenStrings.add(orientedString)
+    const {
+      preview: _preview,
+      searchRotation: _searchRotation,
+      ...publicData
+    } = candidate
+    uniqueCandidates.push({
+      ...publicData,
+      footprinterString: orientedString,
+    })
     if (uniqueCandidates.length >= clamp(maxCandidates, 1, 10)) break
   }
 

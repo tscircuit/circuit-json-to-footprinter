@@ -29,6 +29,21 @@ test("produces an exact passive footprint string", () => {
   expect(result.best?.copperIntersectionOverUnion).toBe(1)
 })
 
+test("encodes a rotated match in the footprinter string", () => {
+  const source = "soic8_pin1location(topside,right)"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.footprinterString).toContain("pin1location(")
+  expect(result.best).not.toHaveProperty("pcbRotation")
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+  expect(circuitJsonFromFootprinter(result.best!.footprinterString)).toEqual(
+    circuitJsonFromFootprinter(source),
+  )
+})
+
 test("infers a BGA grid and continuous dimensions", () => {
   const result = circuitJsonToFootprinter(
     circuitJsonFromFootprinter("bga16_grid4x4_p0.65mm_pad0.32mm"),

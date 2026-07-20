@@ -65,5 +65,8 @@ test("recovers C23380830 AP2112K_3_3TRG1", async () => {
   })
 
   expect(result.best?.family).toBe("dfn")
-  expect(result.best?.footprinterString).toContain("dfn6_missing(2)")
+  expect(result.best?.footprinterString).toBe(
+    "dfn6_missing(5)_p0.95mm_w3.2001mm_pin1location(rightside,bottom)",
+  )
+  expect(result.best).not.toHaveProperty("pcbRotation")
 })
