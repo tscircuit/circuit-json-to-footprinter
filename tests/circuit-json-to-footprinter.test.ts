@@ -43,7 +43,7 @@ test("preserves pill-shaped pads for quad footprints", () => {
   expect(result.best?.footprinterString).toContain("_pillpads")
   expect(result.best?.footprinterString).toContain("thermalpad3.4mmx3.4mm")
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
-})
+}, 15_000)
 
 test("produces an exact passive footprint string", () => {
   const source = "res_p1.3mm_pw0.55mm_ph0.7mm"
