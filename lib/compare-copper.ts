@@ -2,7 +2,7 @@ import type { FootprintPreview, PreviewPad } from "./circuit-json-preview.js"
 
 const DEFAULT_GRID_SIZE = 320
 
-interface Bounds {
+export interface Bounds {
   height: number
   maxX: number
   maxY: number
@@ -13,6 +13,34 @@ interface Bounds {
 
 export interface CopperComparisonSummary {
   copperIntersectionOverUnion: number
+  holeIntersectionOverUnion: number
+}
+
+export interface RasterComparison {
+  coverageLeft: number
+  coverageRight: number
+  gridSize: number
+  iou: number
+  leftOnlyRatio: number
+  normalizedLeft: FootprintPreview
+  normalizedRight: FootprintPreview
+  occupancy: Uint8Array
+  padCountMatch: boolean
+  rightOnlyRatio: number
+}
+
+export type PreviewShape = Pick<
+  PreviewPad,
+  "cornerRadius" | "height" | "rotation" | "shape" | "width" | "x" | "y"
+>
+
+interface RasterizedShapes {
+  coverageLeft: number
+  coverageRight: number
+  iou: number
+  leftOnlyRatio: number
+  occupancy?: Uint8Array
+  rightOnlyRatio: number
 }
 
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180
@@ -22,18 +50,18 @@ const rotatePoint = (x: number, y: number, radians: number) => ({
   y: x * Math.sin(radians) + y * Math.cos(radians),
 })
 
-const getPadBounds = (pad: PreviewPad): Bounds => {
-  const halfWidth = pad.width / 2
-  const halfHeight = pad.height / 2
-  const radians = toRadians(pad.rotation)
+const getShapeBounds = (shape: PreviewShape): Bounds => {
+  const halfWidth = shape.width / 2
+  const halfHeight = shape.height / 2
+  const radians = toRadians(shape.rotation)
   const corners = [
     rotatePoint(-halfWidth, -halfHeight, radians),
     rotatePoint(halfWidth, -halfHeight, radians),
     rotatePoint(halfWidth, halfHeight, radians),
     rotatePoint(-halfWidth, halfHeight, radians),
   ].map((corner) => ({
-    x: corner.x + pad.x,
-    y: corner.y + pad.y,
+    x: corner.x + shape.x,
+    y: corner.y + shape.y,
   }))
 
   const xs = corners.map((corner) => corner.x)
@@ -53,8 +81,8 @@ const getPadBounds = (pad: PreviewPad): Bounds => {
   }
 }
 
-const getFootprintBounds = (pads: PreviewPad[]): Bounds => {
-  if (!pads.length) {
+export const getFootprintBounds = (shapes: readonly PreviewShape[]): Bounds => {
+  if (!shapes.length) {
     return {
       height: 1,
       maxX: 0.5,
@@ -65,7 +93,7 @@ const getFootprintBounds = (pads: PreviewPad[]): Bounds => {
     }
   }
 
-  const bounds = pads.map(getPadBounds)
+  const bounds = shapes.map(getShapeBounds)
   const minX = Math.min(...bounds.map((bound) => bound.minX))
   const minY = Math.min(...bounds.map((bound) => bound.minY))
   const maxX = Math.max(...bounds.map((bound) => bound.maxX))
@@ -115,21 +143,36 @@ const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
   return translateFootprint(footprint, -centerX, -centerY)
 }
 
-const pointInPad = (x: number, y: number, pad: PreviewPad) => {
-  const dx = x - pad.x
-  const dy = y - pad.y
-  const local = rotatePoint(dx, dy, -toRadians(pad.rotation))
-  const halfWidth = pad.width / 2
-  const halfHeight = pad.height / 2
+const getHoleShapes = (pads: readonly PreviewPad[]): PreviewShape[] =>
+  pads.flatMap((pad) => {
+    if (!pad.hole) return []
+    return [
+      {
+        height: pad.hole.height,
+        rotation: pad.hole.rotation,
+        shape: pad.hole.shape,
+        width: pad.hole.width,
+        x: pad.x + pad.hole.offsetX,
+        y: pad.y + pad.hole.offsetY,
+      },
+    ]
+  })
 
-  if (pad.shape === "circle") {
+const pointInShape = (x: number, y: number, shape: PreviewShape) => {
+  const dx = x - shape.x
+  const dy = y - shape.y
+  const local = rotatePoint(dx, dy, -toRadians(shape.rotation))
+  const halfWidth = shape.width / 2
+  const halfHeight = shape.height / 2
+
+  if (shape.shape === "circle") {
     return Math.hypot(local.x, local.y) <= Math.min(halfWidth, halfHeight)
   }
 
-  if (pad.shape === "rect") {
+  if (shape.shape === "rect") {
     const cornerRadius = Math.max(
       0,
-      Math.min(pad.cornerRadius ?? 0, halfWidth, halfHeight),
+      Math.min(shape.cornerRadius ?? 0, halfWidth, halfHeight),
     )
 
     if (cornerRadius === 0) {
@@ -154,7 +197,7 @@ const pointInPad = (x: number, y: number, pad: PreviewPad) => {
     )
   }
 
-  if (pad.width >= pad.height) {
+  if (shape.width >= shape.height) {
     const capsuleLength = halfWidth - halfHeight
     if (Math.abs(local.x) <= capsuleLength && Math.abs(local.y) <= halfHeight) {
       return true
@@ -193,21 +236,29 @@ const mergeBounds = (left: Bounds, right: Bounds): Bounds => {
   }
 }
 
-export const summarizeCopperComparison = (
-  left: FootprintPreview,
-  right: FootprintPreview,
-  gridSize = DEFAULT_GRID_SIZE,
-): CopperComparisonSummary => {
-  const normalizedLeft = centerFootprint(left)
-  const normalizedRight = centerFootprint(right)
-  const bounds = addPadding(
-    mergeBounds(
-      getFootprintBounds(normalizedLeft.pads),
-      getFootprintBounds(normalizedRight.pads),
-    ),
+const getComparisonBounds = (
+  left: readonly PreviewShape[],
+  right: readonly PreviewShape[],
+) => {
+  if (!left.length) return addPadding(getFootprintBounds(right))
+  if (!right.length) return addPadding(getFootprintBounds(left))
+  return addPadding(
+    mergeBounds(getFootprintBounds(left), getFootprintBounds(right)),
   )
+}
+
+const rasterizeShapes = (
+  left: readonly PreviewShape[],
+  right: readonly PreviewShape[],
+  gridSize: number,
+  includeOccupancy: boolean,
+): RasterizedShapes => {
+  const bounds = getComparisonBounds(left, right)
   const cellWidth = bounds.width / gridSize
   const cellHeight = bounds.height / gridSize
+  const occupancy = includeOccupancy
+    ? new Uint8Array(gridSize * gridSize)
+    : undefined
 
   let leftCount = 0
   let rightCount = 0
@@ -218,26 +269,94 @@ export const summarizeCopperComparison = (
 
     for (let column = 0; column < gridSize; column += 1) {
       const sampleX = bounds.minX + (column + 0.5) * cellWidth
-      const inLeft = normalizedLeft.pads.some((pad) =>
-        pointInPad(sampleX, sampleY, pad),
-      )
-      const inRight = normalizedRight.pads.some((pad) =>
-        pointInPad(sampleX, sampleY, pad),
+      const inLeft = left.some((shape) => pointInShape(sampleX, sampleY, shape))
+      const inRight = right.some((shape) =>
+        pointInShape(sampleX, sampleY, shape),
       )
 
       if (inLeft) leftCount += 1
       if (inRight) rightCount += 1
       if (inLeft && inRight) overlapCount += 1
+
+      if (occupancy) {
+        const index = row * gridSize + column
+        occupancy[index] = inLeft && inRight ? 3 : inLeft ? 1 : inRight ? 2 : 0
+      }
     }
   }
 
   const unionCount = leftCount + rightCount - overlapCount
-  const cellArea = cellWidth * cellHeight
-  const intersectionArea = overlapCount * cellArea
-  const unionArea = unionCount * cellArea
 
   return {
-    copperIntersectionOverUnion:
-      unionArea === 0 ? 0 : intersectionArea / unionArea,
+    coverageLeft: leftCount === 0 ? 0 : overlapCount / leftCount,
+    coverageRight: rightCount === 0 ? 0 : overlapCount / rightCount,
+    iou: unionCount === 0 ? 0 : overlapCount / unionCount,
+    leftOnlyRatio:
+      unionCount === 0 ? 0 : Math.max(leftCount - overlapCount, 0) / unionCount,
+    occupancy,
+    rightOnlyRatio:
+      unionCount === 0
+        ? 0
+        : Math.max(rightCount - overlapCount, 0) / unionCount,
+  }
+}
+
+const compareNormalizedFootprints = (
+  left: FootprintPreview,
+  right: FootprintPreview,
+  gridSize: number,
+  includeOccupancy: boolean,
+) => {
+  const normalizedLeft = centerFootprint(left)
+  const normalizedRight = centerFootprint(right)
+  const comparison = rasterizeShapes(
+    normalizedLeft.pads,
+    normalizedRight.pads,
+    gridSize,
+    includeOccupancy,
+  )
+
+  return { comparison, normalizedLeft, normalizedRight }
+}
+
+export const compareFootprints = (
+  left: FootprintPreview,
+  right: FootprintPreview,
+  gridSize = DEFAULT_GRID_SIZE,
+): RasterComparison => {
+  const { comparison, normalizedLeft, normalizedRight } =
+    compareNormalizedFootprints(left, right, gridSize, true)
+
+  return {
+    coverageLeft: comparison.coverageLeft,
+    coverageRight: comparison.coverageRight,
+    gridSize,
+    iou: comparison.iou,
+    leftOnlyRatio: comparison.leftOnlyRatio,
+    normalizedLeft,
+    normalizedRight,
+    occupancy: comparison.occupancy ?? new Uint8Array(gridSize * gridSize),
+    padCountMatch: normalizedLeft.pads.length === normalizedRight.pads.length,
+    rightOnlyRatio: comparison.rightOnlyRatio,
+  }
+}
+
+export const summarizeCopperComparison = (
+  left: FootprintPreview,
+  right: FootprintPreview,
+  gridSize = DEFAULT_GRID_SIZE,
+): CopperComparisonSummary => {
+  const { comparison, normalizedLeft, normalizedRight } =
+    compareNormalizedFootprints(left, right, gridSize, false)
+  const leftHoles = getHoleShapes(normalizedLeft.pads)
+  const rightHoles = getHoleShapes(normalizedRight.pads)
+  const holeIntersectionOverUnion =
+    leftHoles.length === 0 && rightHoles.length === 0
+      ? 1
+      : rasterizeShapes(leftHoles, rightHoles, gridSize, false).iou
+
+  return {
+    copperIntersectionOverUnion: comparison.iou,
+    holeIntersectionOverUnion,
   }
 }

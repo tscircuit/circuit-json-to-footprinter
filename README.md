@@ -2,7 +2,7 @@
 
 Discover the parameterized [`@tscircuit/footprinter`](https://github.com/tscircuit/footprinter) string that best represents the PCB pads in Circuit JSON.
 
-The search combines footprint-family heuristics with continuous optimization of dimensions such as pitch, body width, pad width, pad length, and thermal-pad size. Candidates are ranked using copper intersection-over-union and optional domain hints.
+The search combines footprint-family heuristics with continuous optimization of dimensions such as pitch, body width, pad width, pad length, drill diameter, and thermal-pad size. Candidates are ranked using copper and hole intersection-over-union plus optional domain hints.
 
 ## Install
 
@@ -25,7 +25,7 @@ console.log(result.best?.footprinterString)
 ```
 
 The result includes the best self-contained footprinter string, ranked alternatives,
-geometry scores, copper IoU, optimized parameters, and search diagnostics. When a
+geometry scores, copper/hole IoU, optimized parameters, and search diagnostics. When a
 match requires rotation, its string includes a `pin1location(...)` modifier; no
 separate `pcbRotation` is emitted. The modifier names the edge containing pin 1,
 then its alignment along that edge. For example, `pin1location(leftside,top)` means
@@ -34,6 +34,13 @@ QFN string above already has that orientation, so it needs no modifier. This is
 different from `pin1location(topside,left)`, which places pin 1 on the top edge near
 the left and cannot be produced from the RP2040 orientation by rotation alone. The
 input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
+
+The package also exports `circuitJsonToPreview`, `footprinterStringToPreview`,
+`compareFootprints`, `summarizeCopperComparison`, and `getFootprintBounds` so
+applications can reuse the same shape parsing and comparison implementation as
+the discovery engine. Browser-only comparison code can import the lightweight
+`circuit-json-to-footprinter/compare` entry point without bundling the discovery
+engine or `@tscircuit/footprinter`.
 
 ## Development
 

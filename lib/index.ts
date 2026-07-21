@@ -6,11 +6,26 @@ import {
 } from "./discover-footprinter.js"
 
 export type {
+  CircuitJsonPreviewOptions,
   FootprintPreview,
+  PreviewHole,
   PreviewPad,
   PreviewPadKind,
   PreviewPadShape,
 } from "./circuit-json-preview.js"
+export {
+  circuitJsonToPreview,
+  footprinterStringToPreview,
+} from "./circuit-json-preview.js"
+export {
+  type Bounds,
+  type CopperComparisonSummary,
+  compareFootprints,
+  getFootprintBounds,
+  type PreviewShape,
+  type RasterComparison,
+  summarizeCopperComparison,
+} from "./compare-copper.js"
 export type {
   FootprinterDiscoveryCandidate,
   FootprinterDiscoveryResult,

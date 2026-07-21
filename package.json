@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./compare": {
+      "types": "./dist/compare.d.ts",
+      "import": "./dist/compare.js"
     }
   },
   "files": [
@@ -17,7 +21,7 @@
   ],
   "scripts": {
     "audit:jlc": "bun run scripts/audit-jlc-stock.ts",
-    "build": "tsup lib/index.ts --format esm --dts",
+    "build": "tsup lib/index.ts lib/compare.ts --format esm --dts",
     "format": "biome check --write .",
     "format:check": "biome check .",
     "test": "bun test",

@@ -78,6 +78,7 @@ export interface FootprinterDiscoveryCandidate {
   family: string
   footprinterString: string
   geometryScore: number
+  holeIntersectionOverUnion: number
   optimizedParameters: Partial<Record<NumericParameter, number>>
   rankingScore: number
 }
@@ -280,6 +281,11 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
   const medianPadDiameter = median(
     padBounds.map((bound) => Math.sqrt(bound.width * bound.height)),
   )
+  const medianHoleDiameter = median(
+    target.pads.flatMap((pad) =>
+      pad.hole ? [Math.sqrt(pad.hole.width * pad.hole.height)] : [],
+    ),
+  )
   const platedHoleCount = target.pads.filter(
     (pad) => pad.kind === "plated-hole",
   ).length
@@ -292,7 +298,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     heuristics: {
       ball: medianPadDiameter,
       h: bounds.height + insetQuadAdjustment,
-      id: medianPadDiameter * 0.6,
+      id: medianHoleDiameter || medianPadDiameter * 0.6,
       od: medianPadDiameter,
       p: pitch,
       pad: medianPadDiameter,
@@ -331,6 +337,18 @@ const rotateFootprint = (
     ...footprint,
     pads: footprint.pads.map((pad) => ({
       ...pad,
+      hole: pad.hole
+        ? {
+            ...pad.hole,
+            offsetX:
+              pad.hole.offsetX * Math.cos(radians) -
+              pad.hole.offsetY * Math.sin(radians),
+            offsetY:
+              pad.hole.offsetX * Math.sin(radians) +
+              pad.hole.offsetY * Math.cos(radians),
+            rotation: (pad.hole.rotation + rotation) % 360,
+          }
+        : undefined,
       rotation: (pad.rotation + rotation) % 360,
       x: pad.x * Math.cos(radians) - pad.y * Math.sin(radians),
       y: pad.x * Math.sin(radians) + pad.y * Math.cos(radians),
@@ -395,6 +413,27 @@ const getGeometryLoss = (
     loss += dx * dx * 4 + dy * dy * 4 + dw * dw + dh * dh
     if (candidatePad.kind !== targetPad.kind) loss += 4
     if (candidatePad.shape !== targetPad.shape) loss += 0.08
+    if (Boolean(candidatePad.hole) !== Boolean(targetPad.hole)) {
+      loss += 4
+    } else if (candidatePad.hole && targetPad.hole) {
+      const holeWidthScale = Math.max(targetPad.hole.width, 0.05)
+      const holeHeightScale = Math.max(targetPad.hole.height, 0.05)
+      const holeWidthDifference =
+        (candidatePad.hole.width - targetPad.hole.width) / holeWidthScale
+      const holeHeightDifference =
+        (candidatePad.hole.height - targetPad.hole.height) / holeHeightScale
+      const holeOffsetXDifference =
+        (candidatePad.hole.offsetX - targetPad.hole.offsetX) / positionScale
+      const holeOffsetYDifference =
+        (candidatePad.hole.offsetY - targetPad.hole.offsetY) / positionScale
+
+      loss +=
+        holeWidthDifference * holeWidthDifference +
+        holeHeightDifference * holeHeightDifference +
+        holeOffsetXDifference * holeOffsetXDifference * 4 +
+        holeOffsetYDifference * holeOffsetYDifference * 4
+      if (candidatePad.hole.shape !== targetPad.hole.shape) loss += 0.08
+    }
     if (
       targetPad.portHints.length > 0 &&
       !candidatePad.portHints.some((hint) => targetPad.portHints.includes(hint))
@@ -470,11 +509,30 @@ const buildParameterizedString = (
 
 const geometrySignature = (preview: FootprintPreview) =>
   preview.pads
-    .map((pad) =>
-      [pad.kind, pad.shape, pad.x, pad.y, pad.width, pad.height, pad.rotation]
+    .map((pad) => {
+      const holeSignature = pad.hole
+        ? [
+            pad.hole.shape,
+            pad.hole.offsetX,
+            pad.hole.offsetY,
+            pad.hole.width,
+            pad.hole.height,
+            pad.hole.rotation,
+          ].join(":")
+        : "no-hole"
+      return [
+        pad.kind,
+        pad.shape,
+        pad.x,
+        pad.y,
+        pad.width,
+        pad.height,
+        pad.rotation,
+        holeSignature,
+      ]
         .map(String)
-        .join(":"),
-    )
+        .join(":")
+    })
     .join("|")
 
 const areClose = (left: number, right: number) =>
@@ -491,6 +549,16 @@ const haveSameOrientedPads = (
     if (!rightPad) return false
     const leftSize = getOrientedPadSize(leftPad)
     const rightSize = getOrientedPadSize(rightPad)
+    const holesMatch =
+      !leftPad.hole && !rightPad.hole
+        ? true
+        : Boolean(leftPad.hole && rightPad.hole) &&
+          leftPad.hole?.shape === rightPad.hole?.shape &&
+          areClose(leftPad.hole?.offsetX ?? 0, rightPad.hole?.offsetX ?? 0) &&
+          areClose(leftPad.hole?.offsetY ?? 0, rightPad.hole?.offsetY ?? 0) &&
+          areClose(leftPad.hole?.width ?? 0, rightPad.hole?.width ?? 0) &&
+          areClose(leftPad.hole?.height ?? 0, rightPad.hole?.height ?? 0) &&
+          areClose(leftPad.hole?.rotation ?? 0, rightPad.hole?.rotation ?? 0)
     return (
       leftPad.kind === rightPad.kind &&
       leftPad.shape === rightPad.shape &&
@@ -498,7 +566,8 @@ const haveSameOrientedPads = (
       areClose(leftPad.x, rightPad.x) &&
       areClose(leftPad.y, rightPad.y) &&
       areClose(leftSize.width, rightSize.width) &&
-      areClose(leftSize.height, rightSize.height)
+      areClose(leftSize.height, rightSize.height) &&
+      holesMatch
     )
   })
 }
@@ -877,11 +946,8 @@ export const discoverFootprinterString = (
   )
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): RankedDiscoveryCandidate => {
-      const copperIntersectionOverUnion = summarizeCopperComparison(
-        candidate.preview,
-        target,
-        SEARCH_GRID_SIZE,
-      ).copperIntersectionOverUnion
+      const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
+        summarizeCopperComparison(candidate.preview, target, SEARCH_GRID_SIZE)
       const domainScore = getDomainScore(target, candidate.family)
       return {
         copperIntersectionOverUnion,
@@ -889,6 +955,7 @@ export const discoverFootprinterString = (
         family: candidate.family,
         footprinterString: candidate.footprinterString,
         geometryScore: candidate.geometryScore,
+        holeIntersectionOverUnion,
         optimizedParameters:
           "optimizedParameters" in candidate
             ? (candidate.optimizedParameters as Partial<
@@ -896,7 +963,10 @@ export const discoverFootprinterString = (
               >)
             : {},
         preview: candidate.preview,
-        rankingScore: copperIntersectionOverUnion + domainScore * 0.08,
+        rankingScore:
+          copperIntersectionOverUnion +
+          (holeIntersectionOverUnion - 1) * 0.12 +
+          domainScore * 0.08,
         searchRotation: candidate.searchRotation,
       }
     })
@@ -904,6 +974,7 @@ export const discoverFootprinterString = (
       (left, right) =>
         right.rankingScore - left.rankingScore ||
         right.copperIntersectionOverUnion - left.copperIntersectionOverUnion ||
+        right.holeIntersectionOverUnion - left.holeIntersectionOverUnion ||
         right.domainScore - left.domainScore ||
         right.geometryScore - left.geometryScore ||
         left.searchRotation - right.searchRotation ||
