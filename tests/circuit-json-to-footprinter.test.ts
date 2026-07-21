@@ -31,6 +31,20 @@ test("preserves pill-shaped pads when the footprint family supports them", () =>
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 })
 
+test("preserves pill-shaped pads for quad footprints", () => {
+  const source =
+    "qfn32_p0.5mm_w5.8mm_h5.8mm_pw0.28mm_pl0.8mm_thermalpad3.4mmx3.4mm_pillpads"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["QFN-32 exposed pad"],
+  })
+
+  expect(result.best?.family).toBe("qfn")
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.footprinterString).toContain("thermalpad3.4mmx3.4mm")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
 test("produces an exact passive footprint string", () => {
   const source = "res_p1.3mm_pw0.55mm_ph0.7mm"
   const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
