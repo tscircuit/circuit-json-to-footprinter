@@ -227,29 +227,12 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     Math.min(medianPadWidth, medianPadHeight) * 0.22,
     0.015,
   )
-  const xCoordinates = clusterCoordinates(
-    target.pads.map((pad) => pad.x),
-    tolerance,
-  )
-  const yCoordinates = clusterCoordinates(
-    target.pads.map((pad) => pad.y),
-    tolerance,
-  )
   const centerX = (bounds.minX + bounds.maxX) / 2
   const centerY = (bounds.minY + bounds.maxY) / 2
-  const edgeToleranceX = Math.max(medianPadWidth * 0.75, bounds.width * 0.08)
-  const edgeToleranceY = Math.max(medianPadHeight * 0.75, bounds.height * 0.08)
-  const sidePads = target.pads.filter(
-    (pad) =>
-      Math.abs(pad.x - (bounds.minX + medianPadWidth / 2)) <= edgeToleranceX ||
-      Math.abs(pad.x - (bounds.maxX - medianPadWidth / 2)) <= edgeToleranceX ||
-      Math.abs(pad.y - (bounds.minY + medianPadHeight / 2)) <= edgeToleranceY ||
-      Math.abs(pad.y - (bounds.maxY - medianPadHeight / 2)) <= edgeToleranceY,
-  )
   const medianPadArea = median(
     padBounds.map((bound) => bound.width * bound.height),
   )
-  const thermalPad = target.pads
+  const thermalPadEntry = target.pads
     .map((pad) => ({ bound: getPadBounds(pad), pad }))
     .filter(
       ({ bound, pad }) =>
@@ -261,14 +244,50 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
       (left, right) =>
         right.bound.width * right.bound.height -
         left.bound.width * left.bound.height,
-    )[0]?.bound
+    )[0]
+  // The exposed center pad describes heat transfer, not the lead topology.
+  const topologyPads = thermalPadEntry
+    ? target.pads.filter((pad) => pad !== thermalPadEntry.pad)
+    : target.pads
+  const topologyBounds = getBounds(topologyPads)
+  const topologyCenterX = (topologyBounds.minX + topologyBounds.maxX) / 2
+  const topologyCenterY = (topologyBounds.minY + topologyBounds.maxY) / 2
+  const xCoordinates = clusterCoordinates(
+    topologyPads.map((pad) => pad.x),
+    tolerance,
+  )
+  const yCoordinates = clusterCoordinates(
+    topologyPads.map((pad) => pad.y),
+    tolerance,
+  )
+  const edgeToleranceX = Math.max(
+    medianPadWidth * 0.75,
+    topologyBounds.width * 0.08,
+  )
+  const edgeToleranceY = Math.max(
+    medianPadHeight * 0.75,
+    topologyBounds.height * 0.08,
+  )
+  const sidePads = topologyPads.filter(
+    (pad) =>
+      Math.abs(pad.x - (topologyBounds.minX + medianPadWidth / 2)) <=
+        edgeToleranceX ||
+      Math.abs(pad.x - (topologyBounds.maxX - medianPadWidth / 2)) <=
+        edgeToleranceX ||
+      Math.abs(pad.y - (topologyBounds.minY + medianPadHeight / 2)) <=
+        edgeToleranceY ||
+      Math.abs(pad.y - (topologyBounds.maxY - medianPadHeight / 2)) <=
+        edgeToleranceY,
+  )
   const gridOccupancy =
-    target.pads.length / Math.max(xCoordinates.length * yCoordinates.length, 1)
+    topologyPads.length / Math.max(xCoordinates.length * yCoordinates.length, 1)
   const hasPadsOnFourSides =
-    sidePads.filter((pad) => Math.abs(pad.x - centerX) > bounds.width * 0.3)
-      .length >= 4 &&
-    sidePads.filter((pad) => Math.abs(pad.y - centerY) > bounds.height * 0.3)
-      .length >= 4
+    sidePads.filter(
+      (pad) => Math.abs(pad.x - topologyCenterX) > topologyBounds.width * 0.3,
+    ).length >= 4 &&
+    sidePads.filter(
+      (pad) => Math.abs(pad.y - topologyCenterY) > topologyBounds.height * 0.3,
+    ).length >= 4
 
   let topology: Topology = "irregular"
   if (xCoordinates.length === 1 || yCoordinates.length === 1) {
@@ -276,13 +295,13 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
   } else if (xCoordinates.length <= 2 || yCoordinates.length <= 2) {
     topology = "two-sided"
   } else if (
-    target.pads.length >= 4 &&
+    topologyPads.length >= 4 &&
     xCoordinates.length >= 2 &&
     yCoordinates.length >= 2 &&
     gridOccupancy >= 0.68
   ) {
     topology = "grid"
-  } else if (hasPadsOnFourSides && target.pads.length >= 8) {
+  } else if (hasPadsOnFourSides && topologyPads.length >= 8) {
     topology = "four-sided"
   }
 
@@ -324,8 +343,11 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     },
     perimeterPadCount: sidePads.length,
     platedHoleCount,
-    thermalPad: thermalPad
-      ? { height: thermalPad.height, width: thermalPad.width }
+    thermalPad: thermalPadEntry
+      ? {
+          height: thermalPadEntry.bound.height,
+          width: thermalPadEntry.bound.width,
+        }
       : undefined,
     topology,
   }
@@ -657,14 +679,27 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
   }
 
   if (analysis.thermalPad && analysis.perimeterPadCount > 0) {
-    const thermalPadDimensions = `${formatMillimeters(
-      analysis.thermalPad.width,
-    )}x${formatMillimeters(analysis.thermalPad.height)}`
-    for (const family of ["mlp", "qfn", "quad"]) {
+    // A 90-degree candidate rotation also rotates a non-square thermal pad.
+    // Generate both source orientations so one remains aligned to the target.
+    const thermalPadDimensionOptions = new Set([
+      `${formatMillimeters(analysis.thermalPad.width)}x${formatMillimeters(
+        analysis.thermalPad.height,
+      )}`,
+      `${formatMillimeters(analysis.thermalPad.height)}x${formatMillimeters(
+        analysis.thermalPad.width,
+      )}`,
+    ])
+    const thermalPadFamilies =
+      analysis.topology === "two-sided"
+        ? ["dfn", "msop", "soic", "ssop", "tssop", "vssop"]
+        : ["mlp", "qfn", "quad"]
+    for (const family of thermalPadFamilies) {
       seeds.add(`${family}${analysis.perimeterPadCount}_thermalpad`)
-      seeds.add(
-        `${family}${analysis.perimeterPadCount}_thermalpad${thermalPadDimensions}`,
-      )
+      for (const thermalPadDimensions of thermalPadDimensionOptions) {
+        seeds.add(
+          `${family}${analysis.perimeterPadCount}_thermalpad${thermalPadDimensions}`,
+        )
+      }
     }
   }
 
@@ -748,6 +783,13 @@ const selectSeedsToOptimize = (
   const preferredFamilies = getPreferredFamilies(analysis)
   for (const family of preferredFamilies) {
     const candidate =
+      (analysis.thermalPad
+        ? candidates.find(
+            (entry) =>
+              entry.family === family &&
+              entry.footprinterString.includes("_thermalpad"),
+          )
+        : undefined) ??
       (family === "dfn"
         ? candidates.find(
             (entry) =>
@@ -986,11 +1028,14 @@ export const discoverFootprinterString = (
   const optimized = selectedSeeds.map((seed) =>
     optimizeSeed(seed, target, analysis),
   )
+  const targetPadShapeSignature = padShapeSignature(target)
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): RankedDiscoveryCandidate => {
       const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
         summarizeCopperComparison(candidate.preview, target, SEARCH_GRID_SIZE)
       const domainScore = getDomainScore(target, candidate.family)
+      const shapesMatch =
+        padShapeSignature(candidate.preview) === targetPadShapeSignature
       return {
         copperIntersectionOverUnion,
         domainScore,
@@ -1005,10 +1050,12 @@ export const discoverFootprinterString = (
               >)
             : {},
         preview: candidate.preview,
+        // Package-name hints can disambiguate equivalent geometry, but should
+        // not outrank a shape-exact candidate.
         rankingScore:
           copperIntersectionOverUnion +
           (holeIntersectionOverUnion - 1) * 0.12 +
-          domainScore * 0.08,
+          domainScore * (shapesMatch ? 0.08 : 0.01),
         searchRotation: candidate.searchRotation,
       }
     })
