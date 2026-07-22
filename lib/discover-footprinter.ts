@@ -550,6 +550,12 @@ const geometrySignature = (preview: FootprintPreview) =>
     })
     .join("|")
 
+const padShapeSignature = (preview: FootprintPreview) =>
+  preview.pads
+    .map((pad) => `${pad.kind}:${pad.shape}`)
+    .toSorted()
+    .join("|")
+
 const areClose = (left: number, right: number) =>
   Math.abs(left - right) <= 0.00001
 
@@ -711,8 +717,27 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
 const selectSeedsToOptimize = (
   candidates: SeedCandidate[],
   analysis: TargetAnalysis,
+  target: FootprintPreview,
 ) => {
   const selected = new Map<string, SeedCandidate>()
+  const targetPadShapeSignature = padShapeSignature(target)
+  const selectedShapeFamilies = new Set<string>()
+
+  if (target.pads.some((pad) => pad.shape === "pill")) {
+    for (const candidate of candidates) {
+      if (padShapeSignature(candidate.preview) !== targetPadShapeSignature) {
+        continue
+      }
+      if (selectedShapeFamilies.has(candidate.family)) continue
+      selectedShapeFamilies.add(candidate.family)
+      selected.set(
+        `${candidate.footprinterString}:${candidate.searchRotation}`,
+        candidate,
+      )
+      if (selected.size >= 4) break
+    }
+  }
+
   for (const candidate of candidates.slice(0, 4)) {
     selected.set(
       `${candidate.footprinterString}:${candidate.searchRotation}`,
@@ -957,7 +982,7 @@ export const discoverFootprinterString = (
       left.searchRotation - right.searchRotation,
   )
 
-  const selectedSeeds = selectSeedsToOptimize(seedCandidates, analysis)
+  const selectedSeeds = selectSeedsToOptimize(seedCandidates, analysis, target)
   const optimized = selectedSeeds.map((seed) =>
     optimizeSeed(seed, target, analysis),
   )
