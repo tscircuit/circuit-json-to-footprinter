@@ -144,11 +144,6 @@ const pointInShape = (x: number, y: number, shape: PreviewShape) => {
     return Math.hypot(local.x, local.y) <= Math.min(halfWidth, halfHeight)
   }
 
-  if (shape.shape === "oval") {
-    if (halfWidth <= 0 || halfHeight <= 0) return false
-    return (local.x / halfWidth) ** 2 + (local.y / halfHeight) ** 2 <= 1
-  }
-
   if (shape.shape === "rect") {
     const cornerRadius = Math.max(
       0,

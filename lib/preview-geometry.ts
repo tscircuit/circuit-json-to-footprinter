@@ -76,21 +76,6 @@ export const getShapeBounds = (shape: PreviewShape): Bounds => {
   const halfWidth = shape.width / 2
   const halfHeight = shape.height / 2
   const radians = toRadians(shape.rotation)
-  if (shape.shape === "oval") {
-    const cosine = Math.cos(radians)
-    const sine = Math.sin(radians)
-    const extentX = Math.hypot(halfWidth * cosine, halfHeight * sine)
-    const extentY = Math.hypot(halfWidth * sine, halfHeight * cosine)
-    return {
-      height: extentY * 2,
-      maxX: shape.x + extentX,
-      maxY: shape.y + extentY,
-      minX: shape.x - extentX,
-      minY: shape.y - extentY,
-      width: extentX * 2,
-    }
-  }
-
   const corners = [
     rotatePoint(-halfWidth, -halfHeight, radians),
     rotatePoint(halfWidth, -halfHeight, radians),

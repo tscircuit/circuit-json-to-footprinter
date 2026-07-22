@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
+import { convertCircuitJsonToPcbSvg } from "circuit-to-svg"
 import {
   circuitJsonToFootprinter,
   circuitJsonToPreview,
@@ -115,6 +116,15 @@ test("recovers the Footprinter SOT-89 family with its polygon pad", () => {
   const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 3 })
   expect(result.best?.family).toBe("sot89")
   expect(result.best?.copperIntersectionOverUnion).toBe(1)
+})
+
+test("renders the SOT-89 polygon SMT pad", () => {
+  const circuitJson = fp.string("sot89").circuitJson() as AnyCircuitElement[]
+
+  expect(convertCircuitJsonToPcbSvg(circuitJson)).toMatchSvgSnapshot(
+    import.meta.path,
+    "polygon-smtpad-sot89",
+  )
 })
 
 test("rejects malformed polygon SMT pads", () => {

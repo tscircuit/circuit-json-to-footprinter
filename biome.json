@@ -2,7 +2,9 @@
   "$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "formatter": { "enabled": true, "indentStyle": "space" },
-  "files": { "includes": ["**", "!**/dist", "!**/package.json"] },
+  "files": {
+    "includes": ["**", "!**/dist", "!**/package.json", "!**/__snapshots__"]
+  },
   "javascript": {
     "formatter": {
       "jsxQuoteStyle": "double",

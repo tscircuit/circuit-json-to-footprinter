@@ -1,7 +1,6 @@
 export type {
   FootprintPreview,
   PreviewHole,
-  PreviewHoleShape,
   PreviewPad,
   PreviewPadKind,
   PreviewPadShape,

@@ -9,7 +9,6 @@ export type {
   CircuitJsonPreviewOptions,
   FootprintPreview,
   PreviewHole,
-  PreviewHoleShape,
   PreviewPad,
   PreviewPadKind,
   PreviewPadShape,
