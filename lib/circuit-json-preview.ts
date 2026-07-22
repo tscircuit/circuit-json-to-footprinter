@@ -1,32 +1,63 @@
 import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
+import { getPointBounds, getPolygonArea } from "./preview-geometry.js"
 
-export type PreviewPadShape = "circle" | "pill" | "rect"
+export type PreviewPadShape = "circle" | "pill" | "polygon" | "rect"
+type PreviewNonPolygonPadShape = Exclude<PreviewPadShape, "polygon">
+export type PreviewHoleShape = "circle" | "oval" | "pill" | "rect"
 export type PreviewPadKind = "plated-hole" | "smt"
+
+export interface PreviewPoint {
+  x: number
+  y: number
+}
 
 export interface PreviewHole {
   height: number
   offsetX: number
   offsetY: number
   rotation: number
-  shape: PreviewPadShape
+  shape: PreviewHoleShape
   width: number
 }
 
-export interface PreviewPad {
+interface PreviewGeometryBase {
   cornerRadius?: number
   height: number
+  rotation: number
+  width: number
+  x: number
+  y: number
+}
+
+interface PreviewPolygonGeometry extends PreviewGeometryBase {
+  /** Vertices relative to this shape's x/y position. */
+  points: PreviewPoint[]
+  shape: "polygon"
+}
+
+interface PreviewNonPolygonGeometry extends PreviewGeometryBase {
+  points?: never
+  shape: PreviewHoleShape
+}
+
+interface PreviewNonPolygonPadGeometry extends PreviewGeometryBase {
+  points?: never
+  shape: PreviewNonPolygonPadShape
+}
+
+export type PreviewShape = PreviewNonPolygonGeometry | PreviewPolygonGeometry
+
+interface PreviewPadMetadata {
   hole?: PreviewHole
   id: string
   kind: PreviewPadKind
   layer: string
   portHints: string[]
-  rotation: number
-  shape: PreviewPadShape
-  width: number
-  x: number
-  y: number
 }
+
+export type PreviewPad = PreviewPadMetadata &
+  (PreviewNonPolygonPadGeometry | PreviewPolygonGeometry)
 
 export interface FootprintPreview {
   pads: PreviewPad[]
@@ -60,11 +91,16 @@ const normalizePortHint = (hint: string) => {
   return numericMatch ? `pin${numericMatch[1]}` : trimmed
 }
 
-const normalizeShape = (
+const getPortHints = (element: CircuitElement) =>
+  Array.isArray(element.port_hints)
+    ? element.port_hints.map((hint) => normalizePortHint(String(hint)))
+    : []
+
+const normalizePadShape = (
   shape: unknown,
   width: number,
   height: number,
-): PreviewPadShape => {
+): PreviewNonPolygonPadShape => {
   const normalized = typeof shape === "string" ? shape.toLowerCase() : "rect"
   if (normalized === "circle" || normalized === "ellipse") return "circle"
   if (
@@ -78,6 +114,16 @@ const normalizeShape = (
     return "circle"
   }
   return "rect"
+}
+
+const normalizeHoleShape = (
+  shape: unknown,
+  width: number,
+  height: number,
+): PreviewHoleShape => {
+  const normalized = typeof shape === "string" ? shape.toLowerCase() : "rect"
+  if (normalized === "ellipse" || normalized === "oval") return "oval"
+  return normalizePadShape(shape, width, height)
 }
 
 const getCornerRadius = (
@@ -112,8 +158,8 @@ const getPlatedHolePadGeometry = (element: CircuitElement) => {
       )
     : toNumber(element.outer_height ?? element.height, width)
   const shape = hasRectPad
-    ? normalizeShape(element.pad_shape ?? "rect", width, height)
-    : normalizeShape(elementShape, width, height)
+    ? normalizePadShape(element.pad_shape ?? "rect", width, height)
+    : normalizePadShape(elementShape, width, height)
   const rotation = hasRectPad
     ? toNumber(
         element.rect_ccw_rotation ?? element.ccw_rotation ?? element.rotation,
@@ -146,13 +192,199 @@ const getPlatedHoleGeometry = (
     offsetY: toNumber(element.hole_offset_y),
     rotation: toNumber(
       element.hole_ccw_rotation ??
-        (elementShape === "oval" || elementShape === "pill"
+        (elementShape === "oval" ||
+        elementShape === "pill" ||
+        rawHoleShape === "rotated_pill"
           ? element.ccw_rotation
           : undefined) ??
         element.rotation,
     ),
-    shape: normalizeShape(rawHoleShape, width, height),
+    shape: normalizeHoleShape(rawHoleShape, width, height),
     width,
+  }
+}
+
+const parsePolygonPoints = (value: unknown, elementName: string) => {
+  if (!Array.isArray(value) || value.length < 3) {
+    throw new Error(`${elementName} must contain at least three points`)
+  }
+
+  const points = value.map((rawPoint) => {
+    if (!rawPoint || typeof rawPoint !== "object") {
+      throw new Error(`${elementName} points must contain finite x/y values`)
+    }
+    const point = rawPoint as Record<string, unknown>
+    const x = toNumber(point.x, Number.NaN)
+    const y = toNumber(point.y, Number.NaN)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error(`${elementName} points must contain finite x/y values`)
+    }
+    return { x, y }
+  })
+  if (getPolygonArea(points) <= 1e-12) {
+    throw new Error(`${elementName} must enclose a non-zero area`)
+  }
+  return points
+}
+
+const getPolygonSmtPadGeometry = (element: CircuitElement) => {
+  const absolutePoints = parsePolygonPoints(
+    element.points,
+    "Polygon PCB SMT pads",
+  )
+  const { height, maxX, maxY, minX, minY, width } =
+    getPointBounds(absolutePoints)
+  const x = (minX + maxX) / 2
+  const y = (minY + maxY) / 2
+
+  return {
+    height,
+    points: absolutePoints.map((point) => ({
+      x: point.x - x,
+      y: point.y - y,
+    })),
+    width,
+    x,
+    y,
+  }
+}
+
+const getPolygonPlatedHolePadGeometry = (element: CircuitElement) => {
+  const points = parsePolygonPoints(
+    element.pad_outline,
+    "Polygon-pad PCB plated holes",
+  )
+  const { height, width } = getPointBounds(points)
+  return {
+    height,
+    points,
+    rotation: 0,
+    shape: "polygon" as const,
+    width,
+    x: toNumber(element.x),
+    y: toNumber(element.y),
+  }
+}
+
+const getRequiredPolygonPlatedHoleGeometry = (
+  element: CircuitElement,
+): PreviewHole => {
+  const offsetX = toNumber(element.hole_offset_x)
+  const offsetY = toNumber(element.hole_offset_y)
+  const requirePositiveDimension = (value: unknown, fieldName: string) => {
+    const dimension = toNumber(value, Number.NaN)
+    if (!Number.isFinite(dimension) || dimension <= 0) {
+      throw new Error(
+        `Polygon-pad PCB plated holes require a positive ${fieldName}`,
+      )
+    }
+    return dimension
+  }
+
+  switch (element.hole_shape) {
+    case "circle": {
+      const diameter = requirePositiveDimension(
+        element.hole_diameter,
+        "hole_diameter",
+      )
+      return {
+        height: diameter,
+        offsetX,
+        offsetY,
+        rotation: 0,
+        shape: "circle",
+        width: diameter,
+      }
+    }
+    case "oval":
+    case "pill":
+    case "rotated_pill":
+      return {
+        height: requirePositiveDimension(element.hole_height, "hole_height"),
+        offsetX,
+        offsetY,
+        rotation:
+          element.hole_shape === "rotated_pill"
+            ? toNumber(element.ccw_rotation)
+            : 0,
+        shape: element.hole_shape === "oval" ? "oval" : "pill",
+        width: requirePositiveDimension(element.hole_width, "hole_width"),
+      }
+    default:
+      throw new Error(
+        `Unsupported polygon-pad PCB plated hole shape: ${String(
+          element.hole_shape,
+        )}`,
+      )
+  }
+}
+
+const getSmtPadMetadata = (element: CircuitElement, index: number) => ({
+  id: String(element.pcb_smtpad_id ?? `pcb_smtpad_${index + 1}`),
+  kind: "smt" as const,
+  layer: String(element.layer ?? "top"),
+  portHints: getPortHints(element),
+})
+
+const getPlatedHoleMetadata = (element: CircuitElement, index: number) => ({
+  id: String(element.pcb_plated_hole_id ?? `pcb_plated_hole_${index + 1}`),
+  kind: "plated-hole" as const,
+  layer: Array.isArray(element.layers)
+    ? String(element.layers[0] ?? "top")
+    : "top",
+  portHints: getPortHints(element),
+})
+
+const parseSmtPad = (element: CircuitElement, index: number): PreviewPad => {
+  const metadata = getSmtPadMetadata(element, index)
+  if (element.shape === "polygon") {
+    return {
+      ...metadata,
+      ...getPolygonSmtPadGeometry(element),
+      rotation: 0,
+      shape: "polygon",
+    }
+  }
+
+  const diameter = toNumber(element.radius) * 2
+  const width = toNumber(element.width, diameter)
+  const height = toNumber(element.height, width)
+  return {
+    ...metadata,
+    cornerRadius: getCornerRadius(element, width, height),
+    height,
+    rotation: toNumber(element.ccw_rotation ?? element.rotation),
+    shape: normalizePadShape(element.shape, width, height),
+    width,
+    x: toNumber(element.x),
+    y: toNumber(element.y),
+  }
+}
+
+const parsePlatedHole = (
+  element: CircuitElement,
+  index: number,
+): PreviewPad => {
+  const metadata = getPlatedHoleMetadata(element, index)
+  if (element.shape === "hole_with_polygon_pad") {
+    return {
+      ...metadata,
+      ...getPolygonPlatedHolePadGeometry(element),
+      hole: getRequiredPolygonPlatedHoleGeometry(element),
+    }
+  }
+
+  const { height, rotation, shape, width } = getPlatedHolePadGeometry(element)
+  return {
+    ...metadata,
+    cornerRadius: getCornerRadius(element, width, height),
+    height,
+    hole: getPlatedHoleGeometry(element),
+    rotation,
+    shape,
+    width,
+    x: toNumber(element.x),
+    y: toNumber(element.y),
   }
 }
 
@@ -163,52 +395,10 @@ export const circuitJsonToPreview = (
   const pads = circuitJson.flatMap((rawElement, index): PreviewPad[] => {
     const element = rawElement as CircuitElement
     if (element.type === "pcb_smtpad") {
-      const diameter = toNumber(element.radius) * 2
-      const width = toNumber(element.width, diameter)
-      const height = toNumber(element.height, width)
-      return [
-        {
-          cornerRadius: getCornerRadius(element, width, height),
-          height,
-          id: String(element.pcb_smtpad_id ?? `pcb_smtpad_${index + 1}`),
-          kind: "smt",
-          layer: String(element.layer ?? "top"),
-          portHints: Array.isArray(element.port_hints)
-            ? element.port_hints.map((hint) => normalizePortHint(String(hint)))
-            : [],
-          rotation: toNumber(element.ccw_rotation ?? element.rotation),
-          shape: normalizeShape(element.shape, width, height),
-          width,
-          x: toNumber(element.x),
-          y: toNumber(element.y),
-        },
-      ]
+      return [parseSmtPad(element, index)]
     }
     if (element.type === "pcb_plated_hole") {
-      const { height, rotation, shape, width } =
-        getPlatedHolePadGeometry(element)
-      return [
-        {
-          cornerRadius: getCornerRadius(element, width, height),
-          height,
-          hole: getPlatedHoleGeometry(element),
-          id: String(
-            element.pcb_plated_hole_id ?? `pcb_plated_hole_${index + 1}`,
-          ),
-          kind: "plated-hole",
-          layer: Array.isArray(element.layers)
-            ? String(element.layers[0] ?? "top")
-            : "top",
-          portHints: Array.isArray(element.port_hints)
-            ? element.port_hints.map((hint) => normalizePortHint(String(hint)))
-            : [],
-          rotation,
-          shape,
-          width,
-          x: toNumber(element.x),
-          y: toNumber(element.y),
-        },
-      ]
+      return [parsePlatedHole(element, index)]
     }
     return []
   })

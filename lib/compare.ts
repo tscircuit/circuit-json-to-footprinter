@@ -1,9 +1,11 @@
 export type {
   FootprintPreview,
   PreviewHole,
+  PreviewHoleShape,
   PreviewPad,
   PreviewPadKind,
   PreviewPadShape,
+  PreviewPoint,
 } from "./circuit-json-preview.js"
 export {
   type Bounds,
