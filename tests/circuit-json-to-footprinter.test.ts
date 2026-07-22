@@ -70,6 +70,21 @@ test("encodes a rotated match in the footprinter string", () => {
   )
 })
 
+test("uses oriented dimensions to recover a rotated dual-row footprint", () => {
+  const source =
+    "soic8_p1.27mm_w7.3604mm_pw0.5684mm_pl1.9502mm_pillpads_pin1location(leftside,bottom)"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.family).toBe("soic")
+  expect(result.best?.footprinterString).toContain(
+    "pin1location(leftside,bottom)",
+  )
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+})
+
 test("infers a BGA grid and continuous dimensions", () => {
   const result = circuitJsonToFootprinter(
     circuitJsonFromFootprinter("bga16_grid4x4_p0.65mm_pad0.32mm"),
