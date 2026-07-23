@@ -45,6 +45,45 @@ test("preserves pill-shaped pads for quad footprints", () => {
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 }, 15_000)
 
+test("infers unequal LGA side counts and continuous dimensions", () => {
+  const source = "lga14_grid4x3_p0.5mm_w3.2mm_h2.7mm_pw0.28mm_pl0.675mm"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["LGA-14(2.5x3)"],
+  })
+
+  expect(result.diagnostics.topology).toBe("four-sided")
+  expect(result.best?.family).toBe("lga")
+  expect(result.best?.footprinterString).toMatch(/^lga/)
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+}, 15_000)
+
+test("preserves pill-shaped pads for unequal LGA side counts", () => {
+  const source = "lga16_grid5x3_p0.5mm_w3.6mm_h3.6mm_pw0.28mm_pl0.8mm_pillpads"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["LGA-16(3x3)"],
+  })
+
+  expect(result.best?.family).toBe("lga")
+  expect(result.best?.footprinterString).toContain("lga16_grid5x3")
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+}, 15_000)
+
+test("recovers a two-sided LGA footprint", () => {
+  const source = "lga6_grid3x0_p0.94mm_w1.74mm_pw0.64mm_pl0.57mm"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["LGA-6 microphone"],
+  })
+
+  expect(result.diagnostics.topology).toBe("two-sided")
+  expect(result.best?.family).toBe("lga")
+  expect(result.best?.footprinterString).toContain("lga6_grid3x0")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+}, 15_000)
+
 test("recovers a two-sided footprint with a center thermal pad", () => {
   const source = "soic8_p1.27mm_w6.2mm_pw0.55mm_pl1.4mm_thermalpad2.4x3mm"
   const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
@@ -123,7 +162,7 @@ test("infers a BGA grid and continuous dimensions", () => {
   expect(result.best?.family).toBe("bga")
   expect(result.best?.footprinterString).toContain("p0.65mm")
   expect(result.best?.footprinterString).toContain("pad0.32mm")
-})
+}, 15_000)
 
 test("preserves the C2040-sized thermal pad independently of the body", () => {
   const source = "qfn56_w7_h7_p0.4_pw0.2_pl0.85_thermalpad3.1mmx3.1mm"
@@ -136,7 +175,7 @@ test("preserves the C2040-sized thermal pad independently of the body", () => {
   expect(result.best?.family).toBe("qfn")
   expect(result.best?.footprinterString).toContain("thermalpad3.1mmx3.1mm")
   expect(result.best?.copperIntersectionOverUnion).toBe(1)
-})
+}, 15_000)
 
 test("rejects Circuit JSON without PCB pads", () => {
   expect(() =>

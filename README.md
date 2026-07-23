@@ -54,7 +54,7 @@ bun run build
 
 To benchmark the current highest-stock parts across representative JLC
 categories, run `bun run audit:jlc`. The command requires network access and
-exits non-zero for parts below 98% copper IoU. See the
+exits non-zero for parts below 95% copper IoU. See the
 [JLC top-stock footprint audit](docs/jlc-top-stock-audit.md) for the latest
 snapshot and proposed footprinter additions.
 

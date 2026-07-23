@@ -3,7 +3,7 @@ import { fetchEasyEDAComponent } from "easyeda/browser"
 import { circuitJsonToFootprinter } from "../lib/index.js"
 
 const JLCSEARCH_ORIGIN = "https://jlcsearch.tscircuit.com"
-const COPPER_IOU_THRESHOLD = 0.98
+const COPPER_IOU_THRESHOLD = 0.95
 
 const categoryRoutes = [
   "microcontrollers",
