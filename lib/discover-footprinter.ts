@@ -525,7 +525,7 @@ const geometrySignature = (preview: FootprintPreview) =>
         : "no-hole"
       const pointSignature =
         pad.shape === "polygon"
-          ? pad.points.map((point) => `${point.x}:${point.y}`).join(",")
+          ? pad.points?.map((point) => `${point.x}:${point.y}`).join(",")
           : "no-points"
       return [
         pad.kind,

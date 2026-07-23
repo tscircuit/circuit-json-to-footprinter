@@ -3,7 +3,19 @@ import {
   type Bounds as MathBounds,
   type Point,
 } from "@tscircuit/math-utils"
-import type { PadGeometry } from "./circuit-json-preview.js"
+import type { PreviewPad } from "./circuit-json-preview.js"
+
+export type PreviewShape = Pick<
+  PreviewPad,
+  | "cornerRadius"
+  | "height"
+  | "points"
+  | "rotation"
+  | "shape"
+  | "width"
+  | "x"
+  | "y"
+>
 
 export interface Bounds extends MathBounds {
   height: number
@@ -40,9 +52,10 @@ export const getPolygonArea = (points: readonly Point[]) => {
   return Math.abs(doubledArea) / 2
 }
 
-type PolygonGeometry = Extract<PadGeometry, { shape: "polygon" }>
-
-export const getPolygonWorldPoints = (shape: PolygonGeometry): Point[] => {
+export const getPolygonWorldPoints = (shape: PreviewShape): Point[] => {
+  if (shape.shape !== "polygon" || !shape.points) {
+    throw new Error("Polygon preview shapes require points")
+  }
   const radians = toRadians(shape.rotation)
   return shape.points.map((point) => {
     const rotated = rotatePoint(point.x, point.y, radians)
@@ -50,9 +63,9 @@ export const getPolygonWorldPoints = (shape: PolygonGeometry): Point[] => {
   })
 }
 
-export const getShapeBounds = (shape: PadGeometry): Bounds => {
+export const getShapeBounds = (shape: PreviewShape): Bounds => {
   if (shape.shape === "polygon") {
-    if (shape.points.length < 3) {
+    if (!shape.points || shape.points.length < 3) {
       throw new Error("Polygon preview shapes require at least three points")
     }
     return getSizedBounds(getPolygonWorldPoints(shape))
@@ -73,7 +86,7 @@ export const getShapeBounds = (shape: PadGeometry): Bounds => {
   return getSizedBounds(corners)
 }
 
-export const getFootprintBounds = (shapes: readonly PadGeometry[]): Bounds => {
+export const getFootprintBounds = (shapes: readonly PreviewShape[]): Bounds => {
   if (shapes.length === 0) {
     return {
       height: 1,

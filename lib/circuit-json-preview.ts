@@ -8,7 +8,6 @@ import type { AnyCircuitElement } from "circuit-json"
 import { getPolygonArea } from "./preview-geometry.js"
 
 export type PreviewPadShape = "circle" | "pill" | "polygon" | "rect"
-type NonPolygonPadShape = Exclude<PreviewPadShape, "polygon">
 export type PreviewPadKind = "plated-hole" | "smt"
 
 export interface PreviewHole {
@@ -16,41 +15,25 @@ export interface PreviewHole {
   offsetX: number
   offsetY: number
   rotation: number
-  shape: NonPolygonPadShape
+  shape: PreviewPadShape
   width: number
 }
 
-interface GeometryBase {
+export interface PreviewPad {
   cornerRadius?: number
   height: number
-  rotation: number
-  width: number
-  x: number
-  y: number
-}
-
-interface PolygonGeometry extends GeometryBase {
-  /** Vertices relative to this shape's x/y position. */
-  points: Point[]
-  shape: "polygon"
-}
-
-interface NonPolygonGeometry extends GeometryBase {
-  points?: never
-  shape: NonPolygonPadShape
-}
-
-export type PadGeometry = NonPolygonGeometry | PolygonGeometry
-
-interface PadMetadata {
   hole?: PreviewHole
   id: string
   kind: PreviewPadKind
   layer: string
+  points?: Point[]
   portHints: string[]
+  rotation: number
+  shape: PreviewPadShape
+  width: number
+  x: number
+  y: number
 }
-
-export type PreviewPad = PadMetadata & PadGeometry
 
 export interface FootprintPreview {
   pads: PreviewPad[]
@@ -88,7 +71,7 @@ const normalizeShape = (
   shape: unknown,
   width: number,
   height: number,
-): NonPolygonPadShape => {
+): PreviewPadShape => {
   const normalized = typeof shape === "string" ? shape.toLowerCase() : "rect"
   if (normalized === "circle" || normalized === "ellipse") return "circle"
   if (

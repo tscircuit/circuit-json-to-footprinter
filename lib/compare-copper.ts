@@ -1,18 +1,14 @@
 import { getBoundsCenter, isPointInsidePolygon } from "@tscircuit/math-utils"
-import type {
-  FootprintPreview,
-  PadGeometry,
-  PreviewPad,
-} from "./circuit-json-preview.js"
+import type { FootprintPreview, PreviewPad } from "./circuit-json-preview.js"
 import {
   type Bounds,
   getFootprintBounds,
+  type PreviewShape,
   rotatePoint,
   toRadians,
 } from "./preview-geometry.js"
 
-export type PreviewShape = PadGeometry
-export type { Bounds } from "./preview-geometry.js"
+export type { Bounds, PreviewShape } from "./preview-geometry.js"
 export { getFootprintBounds } from "./preview-geometry.js"
 
 const DEFAULT_GRID_SIZE = 320
@@ -77,7 +73,7 @@ const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
   return translateFootprint(footprint, -center.x, -center.y)
 }
 
-const getHoleShapes = (pads: readonly PreviewPad[]): PadGeometry[] =>
+const getHoleShapes = (pads: readonly PreviewPad[]): PreviewShape[] =>
   pads.flatMap((pad) => {
     if (!pad.hole) return []
     return [
@@ -92,7 +88,7 @@ const getHoleShapes = (pads: readonly PreviewPad[]): PadGeometry[] =>
     ]
   })
 
-const pointInShape = (x: number, y: number, shape: PadGeometry) => {
+const pointInShape = (x: number, y: number, shape: PreviewShape) => {
   const dx = x - shape.x
   const dy = y - shape.y
   const local = rotatePoint(dx, dy, -toRadians(shape.rotation))
@@ -100,6 +96,9 @@ const pointInShape = (x: number, y: number, shape: PadGeometry) => {
   const halfHeight = shape.height / 2
 
   if (shape.shape === "polygon") {
+    if (!shape.points || shape.points.length < 3) {
+      throw new Error("Polygon preview shapes require at least three points")
+    }
     return isPointInsidePolygon(local, shape.points)
   }
 
@@ -175,8 +174,8 @@ const mergeBounds = (left: Bounds, right: Bounds): Bounds => {
 }
 
 const getComparisonBounds = (
-  left: readonly PadGeometry[],
-  right: readonly PadGeometry[],
+  left: readonly PreviewShape[],
+  right: readonly PreviewShape[],
 ) => {
   if (!left.length) return addPadding(getFootprintBounds(right))
   if (!right.length) return addPadding(getFootprintBounds(left))
@@ -186,8 +185,8 @@ const getComparisonBounds = (
 }
 
 const rasterizeShapes = (
-  left: readonly PadGeometry[],
-  right: readonly PadGeometry[],
+  left: readonly PreviewShape[],
+  right: readonly PreviewShape[],
   gridSize: number,
   includeOccupancy: boolean,
 ): RasterizedShapes => {

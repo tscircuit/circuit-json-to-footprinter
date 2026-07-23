@@ -8,7 +8,6 @@ import {
 export type {
   CircuitJsonPreviewOptions,
   FootprintPreview,
-  PadGeometry,
   PreviewHole,
   PreviewPad,
   PreviewPadKind,
