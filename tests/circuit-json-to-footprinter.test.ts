@@ -1,10 +1,57 @@
 import { expect, test } from "bun:test"
 import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
+import { convertCircuitJsonToPcbSvg } from "circuit-to-svg"
 import { circuitJsonToFootprinter } from "../lib/index.js"
 
 const circuitJsonFromFootprinter = (footprinterString: string) =>
   fp.string(footprinterString).circuitJson() as AnyCircuitElement[]
+
+const c11355RoundedRectCircuitJson = () => {
+  const padPositions = [
+    { pin: 1, x: -0.999998, y: -2.109978 },
+    { pin: 2, x: -0.499872, y: -2.109978 },
+    { pin: 3, x: 0, y: -2.109978 },
+    { pin: 4, x: 0.500126, y: -2.109978 },
+    { pin: 5, x: 0.999998, y: -2.109978 },
+    { pin: 10, x: -0.999998, y: 2.109978 },
+    { pin: 9, x: -0.499872, y: 2.109978 },
+    { pin: 8, x: 0, y: 2.109978 },
+    { pin: 7, x: 0.500126, y: 2.109978 },
+    { pin: 6, x: 0.999998, y: 2.109978 },
+  ]
+
+  return padPositions.map(
+    ({ pin, x, y }) =>
+      ({
+        corner_radius: 0.1400048,
+        height: 1.620012,
+        layer: "top",
+        pcb_smtpad_id: `pcb_smtpad_${pin}`,
+        port_hints: [`pin${pin}`],
+        shape: "rect",
+        type: "pcb_smtpad",
+        width: 0.2800096,
+        x,
+        y,
+      }) as AnyCircuitElement,
+  )
+}
+
+const replacePillsWithRoundedRects = (
+  circuitJson: AnyCircuitElement[],
+  shape: "rect" | "rotated_rect",
+) =>
+  circuitJson.map((element) => {
+    if (element.type !== "pcb_smtpad" || element.shape !== "pill")
+      return element
+
+    return {
+      ...element,
+      corner_radius: Math.min(element.width, element.height) / 2,
+      shape,
+    } as AnyCircuitElement
+  })
 
 test("recovers a parameterized dual-row footprint", () => {
   const result = circuitJsonToFootprinter(
@@ -29,6 +76,56 @@ test("preserves pill-shaped pads when the footprint family supports them", () =>
   expect(result.best?.family).toBe("soic")
   expect(result.best?.footprinterString).toContain("_pillpads")
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
+test("matches fully rounded rectangular SMT pads to Footprinter pill pads", () => {
+  const source = "soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm_pillpads"
+  const circuitJson = replacePillsWithRoundedRects(
+    circuitJsonFromFootprinter(source),
+    "rect",
+  )
+  const result = circuitJsonToFootprinter(circuitJson, {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+})
+
+test("matches fully rounded rotated rectangular SMT pads to pill pads", () => {
+  const source =
+    "soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm_pillpads_pin1location(leftside,bottom)"
+  const circuitJson = replacePillsWithRoundedRects(
+    circuitJsonFromFootprinter(source),
+    "rotated_rect",
+  )
+  const result = circuitJsonToFootprinter(circuitJson, {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.footprinterString).toContain(
+    "pin1location(leftside,bottom)",
+  )
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+})
+
+test("snapshots and recovers C11355 rounded rectangular pads", () => {
+  const circuitJson = c11355RoundedRectCircuitJson()
+  const result = circuitJsonToFootprinter(circuitJson, {
+    maxCandidates: 1,
+    sourceHints: ["C11355", "FSUSB42MUX", "MSOP-10"],
+  })
+
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+
+  expect(convertCircuitJsonToPcbSvg(circuitJson)).toMatchSvgSnapshot(
+    import.meta.path,
+    "c11355-rounded-rect-recovery",
+  )
 })
 
 test("preserves pill-shaped pads for quad footprints", () => {
