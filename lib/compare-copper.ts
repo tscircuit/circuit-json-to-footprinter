@@ -1,14 +1,18 @@
 import { getBoundsCenter, isPointInsidePolygon } from "@tscircuit/math-utils"
-import type { FootprintPreview, PreviewPad } from "./circuit-json-preview.js"
+import type { PcbPlatedHole, PcbSmtPad } from "circuit-json"
+import type { FootprintPreview } from "./circuit-json-preview.js"
 import {
   type Bounds,
   getFootprintBounds,
-  type PreviewShape,
+  getPcbHoleGeometry,
+  getPcbPadGeometry,
+  getShapeListBounds,
+  type PcbShape,
   rotatePoint,
   toRadians,
 } from "./preview-geometry.js"
 
-export type { Bounds, PreviewShape } from "./preview-geometry.js"
+export type { Bounds } from "./preview-geometry.js"
 export { getFootprintBounds } from "./preview-geometry.js"
 
 const DEFAULT_GRID_SIZE = 320
@@ -40,6 +44,28 @@ interface RasterizedShapes {
   rightOnlyRatio: number
 }
 
+const translatePad = (
+  pad: PcbSmtPad | PcbPlatedHole,
+  deltaX: number,
+  deltaY: number,
+): PcbSmtPad | PcbPlatedHole => {
+  if (pad.type === "pcb_smtpad" && pad.shape === "polygon") {
+    return {
+      ...pad,
+      points: pad.points.map((point) => ({
+        x: point.x + deltaX,
+        y: point.y + deltaY,
+      })),
+    }
+  }
+
+  return {
+    ...pad,
+    x: pad.x + deltaX,
+    y: pad.y + deltaY,
+  }
+}
+
 const addPadding = (bounds: Bounds): Bounds => {
   const padX = Math.max(bounds.width * 0.18, 0.65)
   const padY = Math.max(bounds.height * 0.18, 0.65)
@@ -60,11 +86,12 @@ const translateFootprint = (
   deltaY: number,
 ): FootprintPreview => ({
   ...footprint,
-  pads: footprint.pads.map((pad) => ({
-    ...pad,
-    x: pad.x + deltaX,
-    y: pad.y + deltaY,
+  holes: footprint.holes.map((hole) => ({
+    ...hole,
+    x: hole.x + deltaX,
+    y: hole.y + deltaY,
   })),
+  pads: footprint.pads.map((pad) => translatePad(pad, deltaX, deltaY)),
 })
 
 const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
@@ -73,22 +100,18 @@ const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
   return translateFootprint(footprint, -center.x, -center.y)
 }
 
-const getHoleShapes = (pads: readonly PreviewPad[]): PreviewShape[] =>
-  pads.flatMap((pad) => {
-    if (!pad.hole) return []
-    return [
-      {
-        height: pad.hole.height,
-        rotation: pad.hole.rotation,
-        shape: pad.hole.shape,
-        width: pad.hole.width,
-        x: pad.x + pad.hole.offsetX,
-        y: pad.y + pad.hole.offsetY,
-      },
-    ]
-  })
+const getCopperShapes = (footprint: FootprintPreview): PcbShape[] =>
+  footprint.pads.map(getPcbPadGeometry)
 
-const pointInShape = (x: number, y: number, shape: PreviewShape) => {
+const getHoleShapes = (footprint: FootprintPreview): PcbShape[] => [
+  ...footprint.pads.flatMap((pad) => {
+    const hole = getPcbPadGeometry(pad).hole
+    return hole ? [hole] : []
+  }),
+  ...footprint.holes.map(getPcbHoleGeometry),
+]
+
+const pointInShape = (x: number, y: number, shape: PcbShape) => {
   const dx = x - shape.x
   const dy = y - shape.y
   const local = rotatePoint(dx, dy, -toRadians(shape.rotation))
@@ -104,6 +127,15 @@ const pointInShape = (x: number, y: number, shape: PreviewShape) => {
 
   if (shape.shape === "circle") {
     return Math.hypot(local.x, local.y) <= Math.min(halfWidth, halfHeight)
+  }
+
+  if (shape.shape === "ellipse") {
+    if (halfWidth === 0 || halfHeight === 0) return false
+    return (
+      (local.x * local.x) / (halfWidth * halfWidth) +
+        (local.y * local.y) / (halfHeight * halfHeight) <=
+      1
+    )
   }
 
   if (shape.shape === "rect") {
@@ -174,19 +206,19 @@ const mergeBounds = (left: Bounds, right: Bounds): Bounds => {
 }
 
 const getComparisonBounds = (
-  left: readonly PreviewShape[],
-  right: readonly PreviewShape[],
+  left: readonly PcbShape[],
+  right: readonly PcbShape[],
 ) => {
-  if (!left.length) return addPadding(getFootprintBounds(right))
-  if (!right.length) return addPadding(getFootprintBounds(left))
+  if (!left.length) return addPadding(getShapeListBounds(right))
+  if (!right.length) return addPadding(getShapeListBounds(left))
   return addPadding(
-    mergeBounds(getFootprintBounds(left), getFootprintBounds(right)),
+    mergeBounds(getShapeListBounds(left), getShapeListBounds(right)),
   )
 }
 
 const rasterizeShapes = (
-  left: readonly PreviewShape[],
-  right: readonly PreviewShape[],
+  left: readonly PcbShape[],
+  right: readonly PcbShape[],
   gridSize: number,
   includeOccupancy: boolean,
 ): RasterizedShapes => {
@@ -247,8 +279,8 @@ const compareNormalizedFootprints = (
   const normalizedLeft = centerFootprint(left)
   const normalizedRight = centerFootprint(right)
   const comparison = rasterizeShapes(
-    normalizedLeft.pads,
-    normalizedRight.pads,
+    getCopperShapes(normalizedLeft),
+    getCopperShapes(normalizedRight),
     gridSize,
     includeOccupancy,
   )
@@ -285,8 +317,8 @@ export const summarizeCopperComparison = (
 ): CopperComparisonSummary => {
   const { comparison, normalizedLeft, normalizedRight } =
     compareNormalizedFootprints(left, right, gridSize, false)
-  const leftHoles = getHoleShapes(normalizedLeft.pads)
-  const rightHoles = getHoleShapes(normalizedRight.pads)
+  const leftHoles = getHoleShapes(normalizedLeft)
+  const rightHoles = getHoleShapes(normalizedRight)
   const holeIntersectionOverUnion =
     leftHoles.length === 0 && rightHoles.length === 0
       ? 1

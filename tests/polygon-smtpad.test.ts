@@ -33,23 +33,18 @@ test("preserves polygon SMT pad vertices and bounds", () => {
   ])
 
   expect(preview.pads[0]).toEqual({
-    height: 2,
-    id: "pcb_smtpad_polygon",
-    kind: "smt",
     layer: "top",
     points: [
-      { x: -2, y: -1 },
-      { x: 2, y: -1 },
-      { x: 2, y: 1 },
-      { x: 0, y: 0 },
-      { x: -2, y: 1 },
+      { x: 4, y: 5 },
+      { x: 8, y: 5 },
+      { x: 8, y: 7 },
+      { x: 6, y: 6 },
+      { x: 4, y: 7 },
     ],
-    portHints: ["pin2"],
-    rotation: 0,
+    pcb_smtpad_id: "pcb_smtpad_polygon",
+    port_hints: ["2"],
     shape: "polygon",
-    width: 4,
-    x: 6,
-    y: 6,
+    type: "pcb_smtpad",
   })
   expect(getFootprintBounds(preview.pads)).toEqual({
     height: 2,
@@ -110,8 +105,8 @@ test("recovers the Footprinter SOT-89 family with its polygon pad", () => {
   const polygon = preview.pads.find((pad) => pad.shape === "polygon")
 
   expect(polygon?.points).toHaveLength(8)
-  expect(polygon?.width).toBeCloseTo(4.6)
-  expect(polygon?.height).toBeCloseTo(1.733)
+  expect(polygon && getFootprintBounds([polygon]).width).toBeCloseTo(4.6)
+  expect(polygon && getFootprintBounds([polygon]).height).toBeCloseTo(1.733)
 
   const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 3 })
   expect(result.best?.family).toBe("sot89")

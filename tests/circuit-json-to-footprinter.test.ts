@@ -231,7 +231,7 @@ test("rejects Circuit JSON without PCB pads", () => {
     circuitJsonToFootprinter([
       { source_component_id: "source_component_0", type: "source_component" },
     ] as AnyCircuitElement[]),
-  ).toThrow("at least one PCB SMT pad or plated hole")
+  ).toThrow("at least one PcbSmtPad or PcbPlatedHole")
 })
 
 test("accepts readonly Circuit JSON", () => {

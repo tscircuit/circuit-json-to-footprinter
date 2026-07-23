@@ -8,10 +8,6 @@ import {
 export type {
   CircuitJsonPreviewOptions,
   FootprintPreview,
-  PreviewHole,
-  PreviewPad,
-  PreviewPadKind,
-  PreviewPadShape,
 } from "./circuit-json-preview.js"
 export {
   circuitJsonToPreview,
@@ -22,7 +18,6 @@ export {
   type CopperComparisonSummary,
   compareFootprints,
   getFootprintBounds,
-  type PreviewShape,
   type RasterComparison,
   summarizeCopperComparison,
 } from "./compare-copper.js"
