@@ -40,7 +40,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@tscircuit/footprinter": "^0.0.384",
+    "@tscircuit/footprinter": "^0.0.385",
     "circuit-json": "^0.0.448",
     "format-si-unit": "^0.0.10"
   },
