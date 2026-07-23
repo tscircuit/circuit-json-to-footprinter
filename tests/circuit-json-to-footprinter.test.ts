@@ -45,6 +45,34 @@ test("preserves pill-shaped pads for quad footprints", () => {
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 }, 15_000)
 
+test("recovers a two-sided footprint with a center thermal pad", () => {
+  const source = "soic8_p1.27mm_w6.2mm_pw0.55mm_pl1.4mm_thermalpad2.4x3mm"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8 exposed pad"],
+  })
+
+  expect(result.diagnostics.topology).toBe("two-sided")
+  expect(result.best?.family).toBe("soic")
+  expect(result.best?.footprinterString).toContain("thermalpad2.4mmx3mm")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
+test("swaps thermal-pad dimensions for a rotated two-sided footprint", () => {
+  const source =
+    "dfn8_p1.27mm_w7.6mm_pw0.574mm_pl2.038mm_thermalpad3.2x2.4mm_pillpads_pin1location(leftside,bottom)"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["HTSSOP-8 exposed pad"],
+  })
+
+  expect(result.diagnostics.topology).toBe("two-sided")
+  expect(result.best?.family).toBe("dfn")
+  expect(result.best?.footprinterString).toContain("thermalpad3.2mmx2.4mm")
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
 test("produces an exact passive footprint string", () => {
   const source = "res_p1.3mm_pw0.55mm_ph0.7mm"
   const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
