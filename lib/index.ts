@@ -8,11 +8,11 @@ import {
 export type {
   CircuitJsonPreviewOptions,
   FootprintPreview,
+  PadGeometry,
   PreviewHole,
   PreviewPad,
   PreviewPadKind,
   PreviewPadShape,
-  PreviewPoint,
 } from "./circuit-json-preview.js"
 export {
   circuitJsonToPreview,

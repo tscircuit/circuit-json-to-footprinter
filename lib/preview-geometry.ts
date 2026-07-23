@@ -1,11 +1,12 @@
-import type { PreviewPoint, PreviewShape } from "./circuit-json-preview.js"
+import {
+  getBoundsFromPoints,
+  type Bounds as MathBounds,
+  type Point,
+} from "@tscircuit/math-utils"
+import type { PadGeometry } from "./circuit-json-preview.js"
 
-export interface Bounds {
+export interface Bounds extends MathBounds {
   height: number
-  maxX: number
-  maxY: number
-  minX: number
-  minY: number
   width: number
 }
 
@@ -16,34 +17,20 @@ export const rotatePoint = (x: number, y: number, radians: number) => ({
   y: x * Math.sin(radians) + y * Math.cos(radians),
 })
 
-export const getPointBounds = (points: readonly PreviewPoint[]): Bounds => {
-  if (points.length === 0) {
+const getSizedBounds = (points: readonly Point[]): Bounds => {
+  const bounds = getBoundsFromPoints([...points])
+  if (!bounds) {
     throw new Error("Cannot calculate bounds for an empty point list")
   }
 
-  let minX = points[0].x
-  let maxX = points[0].x
-  let minY = points[0].y
-  let maxY = points[0].y
-  for (let index = 1; index < points.length; index += 1) {
-    const point = points[index]
-    minX = Math.min(minX, point.x)
-    maxX = Math.max(maxX, point.x)
-    minY = Math.min(minY, point.y)
-    maxY = Math.max(maxY, point.y)
-  }
-
   return {
-    height: maxY - minY,
-    maxX,
-    maxY,
-    minX,
-    minY,
-    width: maxX - minX,
+    ...bounds,
+    height: bounds.maxY - bounds.minY,
+    width: bounds.maxX - bounds.minX,
   }
 }
 
-export const getPolygonArea = (points: readonly PreviewPoint[]) => {
+export const getPolygonArea = (points: readonly Point[]) => {
   let doubledArea = 0
   for (let index = 0; index < points.length; index += 1) {
     const current = points[index]
@@ -53,11 +40,9 @@ export const getPolygonArea = (points: readonly PreviewPoint[]) => {
   return Math.abs(doubledArea) / 2
 }
 
-type PreviewPolygonShape = Extract<PreviewShape, { shape: "polygon" }>
+type PolygonGeometry = Extract<PadGeometry, { shape: "polygon" }>
 
-export const getPolygonWorldPoints = (
-  shape: PreviewPolygonShape,
-): PreviewPoint[] => {
+export const getPolygonWorldPoints = (shape: PolygonGeometry): Point[] => {
   const radians = toRadians(shape.rotation)
   return shape.points.map((point) => {
     const rotated = rotatePoint(point.x, point.y, radians)
@@ -65,12 +50,12 @@ export const getPolygonWorldPoints = (
   })
 }
 
-export const getShapeBounds = (shape: PreviewShape): Bounds => {
+export const getShapeBounds = (shape: PadGeometry): Bounds => {
   if (shape.shape === "polygon") {
     if (shape.points.length < 3) {
       throw new Error("Polygon preview shapes require at least three points")
     }
-    return getPointBounds(getPolygonWorldPoints(shape))
+    return getSizedBounds(getPolygonWorldPoints(shape))
   }
 
   const halfWidth = shape.width / 2
@@ -85,10 +70,10 @@ export const getShapeBounds = (shape: PreviewShape): Bounds => {
     x: corner.x + shape.x,
     y: corner.y + shape.y,
   }))
-  return getPointBounds(corners)
+  return getSizedBounds(corners)
 }
 
-export const getFootprintBounds = (shapes: readonly PreviewShape[]): Bounds => {
+export const getFootprintBounds = (shapes: readonly PadGeometry[]): Bounds => {
   if (shapes.length === 0) {
     return {
       height: 1,
@@ -101,17 +86,10 @@ export const getFootprintBounds = (shapes: readonly PreviewShape[]): Bounds => {
   }
 
   const bounds = shapes.map(getShapeBounds)
-  const minX = Math.min(...bounds.map((bound) => bound.minX))
-  const minY = Math.min(...bounds.map((bound) => bound.minY))
-  const maxX = Math.max(...bounds.map((bound) => bound.maxX))
-  const maxY = Math.max(...bounds.map((bound) => bound.maxY))
-
-  return {
-    height: maxY - minY,
-    maxX,
-    maxY,
-    minX,
-    minY,
-    width: maxX - minX,
-  }
+  return getSizedBounds(
+    bounds.flatMap((bound) => [
+      { x: bound.minX, y: bound.minY },
+      { x: bound.maxX, y: bound.maxY },
+    ]),
+  )
 }

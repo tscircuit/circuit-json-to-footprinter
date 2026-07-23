@@ -1,7 +1,8 @@
+import { getBoundsCenter, isPointInsidePolygon } from "@tscircuit/math-utils"
 import type {
   FootprintPreview,
+  PadGeometry,
   PreviewPad,
-  PreviewShape,
 } from "./circuit-json-preview.js"
 import {
   type Bounds,
@@ -10,7 +11,7 @@ import {
   toRadians,
 } from "./preview-geometry.js"
 
-export type { PreviewShape } from "./circuit-json-preview.js"
+export type PreviewShape = PadGeometry
 export type { Bounds } from "./preview-geometry.js"
 export { getFootprintBounds } from "./preview-geometry.js"
 
@@ -72,12 +73,11 @@ const translateFootprint = (
 
 const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
   const bounds = getFootprintBounds(footprint.pads)
-  const centerX = (bounds.minX + bounds.maxX) / 2
-  const centerY = (bounds.minY + bounds.maxY) / 2
-  return translateFootprint(footprint, -centerX, -centerY)
+  const center = getBoundsCenter(bounds)
+  return translateFootprint(footprint, -center.x, -center.y)
 }
 
-const getHoleShapes = (pads: readonly PreviewPad[]): PreviewShape[] =>
+const getHoleShapes = (pads: readonly PreviewPad[]): PadGeometry[] =>
   pads.flatMap((pad) => {
     if (!pad.hole) return []
     return [
@@ -92,44 +92,7 @@ const getHoleShapes = (pads: readonly PreviewPad[]): PreviewShape[] =>
     ]
   })
 
-const pointInPolygon = (
-  x: number,
-  y: number,
-  points: readonly { x: number; y: number }[],
-) => {
-  if (points.length < 3) return false
-
-  let inside = false
-  for (let index = 0, previous = points.length - 1; index < points.length; ) {
-    const currentPoint = points[index]
-    const previousPoint = points[previous]
-    const edgeX = currentPoint.x - previousPoint.x
-    const edgeY = currentPoint.y - previousPoint.y
-    const pointX = x - previousPoint.x
-    const pointY = y - previousPoint.y
-    const crossProduct = edgeX * pointY - edgeY * pointX
-    const isOnEdge =
-      Math.abs(crossProduct) <= 1e-9 &&
-      x >= Math.min(previousPoint.x, currentPoint.x) - 1e-9 &&
-      x <= Math.max(previousPoint.x, currentPoint.x) + 1e-9 &&
-      y >= Math.min(previousPoint.y, currentPoint.y) - 1e-9 &&
-      y <= Math.max(previousPoint.y, currentPoint.y) + 1e-9
-    if (isOnEdge) return true
-
-    const crossesHorizontalRay =
-      currentPoint.y > y !== previousPoint.y > y &&
-      x <
-        ((previousPoint.x - currentPoint.x) * (y - currentPoint.y)) /
-          (previousPoint.y - currentPoint.y) +
-          currentPoint.x
-    if (crossesHorizontalRay) inside = !inside
-    previous = index
-    index += 1
-  }
-  return inside
-}
-
-const pointInShape = (x: number, y: number, shape: PreviewShape) => {
+const pointInShape = (x: number, y: number, shape: PadGeometry) => {
   const dx = x - shape.x
   const dy = y - shape.y
   const local = rotatePoint(dx, dy, -toRadians(shape.rotation))
@@ -137,7 +100,7 @@ const pointInShape = (x: number, y: number, shape: PreviewShape) => {
   const halfHeight = shape.height / 2
 
   if (shape.shape === "polygon") {
-    return pointInPolygon(local.x, local.y, shape.points)
+    return isPointInsidePolygon(local, shape.points)
   }
 
   if (shape.shape === "circle") {
@@ -212,8 +175,8 @@ const mergeBounds = (left: Bounds, right: Bounds): Bounds => {
 }
 
 const getComparisonBounds = (
-  left: readonly PreviewShape[],
-  right: readonly PreviewShape[],
+  left: readonly PadGeometry[],
+  right: readonly PadGeometry[],
 ) => {
   if (!left.length) return addPadding(getFootprintBounds(right))
   if (!right.length) return addPadding(getFootprintBounds(left))
@@ -223,8 +186,8 @@ const getComparisonBounds = (
 }
 
 const rasterizeShapes = (
-  left: readonly PreviewShape[],
-  right: readonly PreviewShape[],
+  left: readonly PadGeometry[],
+  right: readonly PadGeometry[],
   gridSize: number,
   includeOccupancy: boolean,
 ): RasterizedShapes => {

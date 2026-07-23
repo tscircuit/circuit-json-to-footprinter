@@ -1,26 +1,26 @@
 import { fp } from "@tscircuit/footprinter"
+import {
+  getBoundsCenter,
+  getBoundsFromPoints,
+  type Point,
+} from "@tscircuit/math-utils"
 import type { AnyCircuitElement } from "circuit-json"
-import { getPointBounds, getPolygonArea } from "./preview-geometry.js"
+import { getPolygonArea } from "./preview-geometry.js"
 
 export type PreviewPadShape = "circle" | "pill" | "polygon" | "rect"
-type PreviewNonPolygonPadShape = Exclude<PreviewPadShape, "polygon">
+type NonPolygonPadShape = Exclude<PreviewPadShape, "polygon">
 export type PreviewPadKind = "plated-hole" | "smt"
-
-export interface PreviewPoint {
-  x: number
-  y: number
-}
 
 export interface PreviewHole {
   height: number
   offsetX: number
   offsetY: number
   rotation: number
-  shape: PreviewNonPolygonPadShape
+  shape: NonPolygonPadShape
   width: number
 }
 
-interface PreviewGeometryBase {
+interface GeometryBase {
   cornerRadius?: number
   height: number
   rotation: number
@@ -29,20 +29,20 @@ interface PreviewGeometryBase {
   y: number
 }
 
-interface PreviewPolygonGeometry extends PreviewGeometryBase {
+interface PolygonGeometry extends GeometryBase {
   /** Vertices relative to this shape's x/y position. */
-  points: PreviewPoint[]
+  points: Point[]
   shape: "polygon"
 }
 
-interface PreviewNonPolygonGeometry extends PreviewGeometryBase {
+interface NonPolygonGeometry extends GeometryBase {
   points?: never
-  shape: PreviewNonPolygonPadShape
+  shape: NonPolygonPadShape
 }
 
-export type PreviewShape = PreviewNonPolygonGeometry | PreviewPolygonGeometry
+export type PadGeometry = NonPolygonGeometry | PolygonGeometry
 
-interface PreviewPadMetadata {
+interface PadMetadata {
   hole?: PreviewHole
   id: string
   kind: PreviewPadKind
@@ -50,8 +50,7 @@ interface PreviewPadMetadata {
   portHints: string[]
 }
 
-export type PreviewPad = PreviewPadMetadata &
-  (PreviewNonPolygonGeometry | PreviewPolygonGeometry)
+export type PreviewPad = PadMetadata & PadGeometry
 
 export interface FootprintPreview {
   pads: PreviewPad[]
@@ -89,7 +88,7 @@ const normalizeShape = (
   shape: unknown,
   width: number,
   height: number,
-): PreviewNonPolygonPadShape => {
+): NonPolygonPadShape => {
   const normalized = typeof shape === "string" ? shape.toLowerCase() : "rect"
   if (normalized === "circle" || normalized === "ellipse") return "circle"
   if (
@@ -209,18 +208,19 @@ const getPolygonSmtPadGeometry = (element: CircuitElement) => {
     element.points,
     "Polygon PCB SMT pads",
   )
-  const { height, maxX, maxY, minX, minY, width } =
-    getPointBounds(absolutePoints)
-  const x = (minX + maxX) / 2
-  const y = (minY + maxY) / 2
+  const bounds = getBoundsFromPoints(absolutePoints)
+  if (!bounds) {
+    throw new Error("Polygon PCB SMT pads must contain at least three points")
+  }
+  const { x, y } = getBoundsCenter(bounds)
 
   return {
-    height,
+    height: bounds.maxY - bounds.minY,
     points: absolutePoints.map((point) => ({
       x: point.x - x,
       y: point.y - y,
     })),
-    width,
+    width: bounds.maxX - bounds.minX,
     x,
     y,
   }
