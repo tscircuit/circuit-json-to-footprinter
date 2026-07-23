@@ -6,6 +6,21 @@ import { circuitJsonToFootprinter } from "../lib/index.js"
 const circuitJsonFromFootprinter = (footprinterString: string) =>
   fp.string(footprinterString).circuitJson() as AnyCircuitElement[]
 
+const replacePillsWithRoundedRects = (
+  circuitJson: AnyCircuitElement[],
+  shape: "rect" | "rotated_rect",
+) =>
+  circuitJson.map((element) => {
+    if (element.type !== "pcb_smtpad" || element.shape !== "pill")
+      return element
+
+    return {
+      ...element,
+      corner_radius: Math.min(element.width, element.height) / 2,
+      shape,
+    } as AnyCircuitElement
+  })
+
 test("recovers a parameterized dual-row footprint", () => {
   const result = circuitJsonToFootprinter(
     circuitJsonFromFootprinter("soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm"),
@@ -29,6 +44,40 @@ test("preserves pill-shaped pads when the footprint family supports them", () =>
   expect(result.best?.family).toBe("soic")
   expect(result.best?.footprinterString).toContain("_pillpads")
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
+test("matches fully rounded rectangular SMT pads to Footprinter pill pads", () => {
+  const source = "soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm_pillpads"
+  const circuitJson = replacePillsWithRoundedRects(
+    circuitJsonFromFootprinter(source),
+    "rect",
+  )
+  const result = circuitJsonToFootprinter(circuitJson, {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+})
+
+test("matches fully rounded rotated rectangular SMT pads to pill pads", () => {
+  const source =
+    "soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm_pillpads_pin1location(leftside,bottom)"
+  const circuitJson = replacePillsWithRoundedRects(
+    circuitJsonFromFootprinter(source),
+    "rotated_rect",
+  )
+  const result = circuitJsonToFootprinter(circuitJson, {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.footprinterString).toContain(
+    "pin1location(leftside,bottom)",
+  )
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
 })
 
 test("preserves pill-shaped pads for quad footprints", () => {

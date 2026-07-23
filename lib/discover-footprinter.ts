@@ -445,6 +445,21 @@ const matchPadsByPosition = (left: PreviewPad[], right: PreviewPad[]) => {
   })
 }
 
+const getEffectivePadShape = (pad: PreviewPad) => {
+  if (pad.shape !== "rect") return pad.shape
+
+  const maximumCornerRadius = Math.min(pad.width, pad.height) / 2
+  const tolerance = Math.max(maximumCornerRadius * 0.00001, 0.00001)
+  return (pad.cornerRadius ?? 0) >= maximumCornerRadius - tolerance
+    ? "pill"
+    : "rect"
+}
+
+const getEffectiveCornerRadius = (pad: PreviewPad) =>
+  getEffectivePadShape(pad) === "pill"
+    ? Math.min(pad.width, pad.height) / 2
+    : (pad.cornerRadius ?? 0)
+
 const getGeometryLoss = (
   candidate: FootprintPreview,
   target: FootprintPreview,
@@ -472,10 +487,27 @@ const getGeometryLoss = (
     const dh =
       (candidateSize.height - targetSize.height) /
       Math.max(targetSize.height, 0.05)
+    const cornerRadiusScale = Math.max(
+      Math.min(targetPad.width, targetPad.height) / 2,
+      0.025,
+    )
+    const cornerRadiusDifference =
+      (getEffectiveCornerRadius(candidatePad) -
+        getEffectiveCornerRadius(targetPad)) /
+      cornerRadiusScale
 
-    loss += dx * dx * 4 + dy * dy * 4 + dw * dw + dh * dh
+    loss +=
+      dx * dx * 4 +
+      dy * dy * 4 +
+      dw * dw +
+      dh * dh +
+      cornerRadiusDifference * cornerRadiusDifference * 0.08
     if (candidatePad.kind !== targetPad.kind) loss += 4
-    if (candidatePad.shape !== targetPad.shape) loss += 0.08
+    if (
+      getEffectivePadShape(candidatePad) !== getEffectivePadShape(targetPad)
+    ) {
+      loss += 0.08
+    }
     if (Boolean(candidatePad.hole) !== Boolean(targetPad.hole)) {
       loss += 4
     } else if (candidatePad.hole && targetPad.hole) {
@@ -597,6 +629,7 @@ const geometrySignature = (preview: FootprintPreview) =>
         pad.height,
         pad.rotation,
         pointSignature,
+        pad.cornerRadius ?? 0,
         holeSignature,
       ]
         .map(String)
@@ -606,7 +639,7 @@ const geometrySignature = (preview: FootprintPreview) =>
 
 const padShapeSignature = (preview: FootprintPreview) =>
   preview.pads
-    .map((pad) => `${pad.kind}:${pad.shape}`)
+    .map((pad) => `${pad.kind}:${getEffectivePadShape(pad)}`)
     .toSorted()
     .join("|")
 
@@ -663,13 +696,17 @@ const haveSameOrientedPads = (
           areClose(leftPad.hole?.rotation ?? 0, rightPad.hole?.rotation ?? 0)
     return (
       leftPad.kind === rightPad.kind &&
-      leftPad.shape === rightPad.shape &&
+      getEffectivePadShape(leftPad) === getEffectivePadShape(rightPad) &&
       leftPad.portHints.join("|") === rightPad.portHints.join("|") &&
       areClose(leftPad.x, rightPad.x) &&
       areClose(leftPad.y, rightPad.y) &&
       areClose(leftSize.width, rightSize.width) &&
       areClose(leftSize.height, rightSize.height) &&
       haveSamePolygon(leftPad, rightPad) &&
+      areClose(
+        getEffectiveCornerRadius(leftPad),
+        getEffectiveCornerRadius(rightPad),
+      ) &&
       holesMatch
     )
   })
@@ -816,7 +853,7 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     }
   }
 
-  if (target.pads.some((pad) => pad.shape === "pill")) {
+  if (target.pads.some((pad) => getEffectivePadShape(pad) === "pill")) {
     for (const seed of [...seeds]) {
       const pillPadSeed = `${seed}_pillpads`
       const preview = tryBuild(pillPadSeed)
@@ -856,7 +893,7 @@ const selectSeedsToOptimize = (
     }
   }
 
-  if (target.pads.some((pad) => pad.shape === "pill")) {
+  if (target.pads.some((pad) => getEffectivePadShape(pad) === "pill")) {
     for (const candidate of candidates) {
       if (padShapeSignature(candidate.preview) !== targetPadShapeSignature) {
         continue
