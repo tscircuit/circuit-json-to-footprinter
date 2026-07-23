@@ -1,10 +1,42 @@
 import { expect, test } from "bun:test"
 import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
+import { convertCircuitJsonToPcbSvg } from "circuit-to-svg"
 import { circuitJsonToFootprinter } from "../lib/index.js"
 
 const circuitJsonFromFootprinter = (footprinterString: string) =>
   fp.string(footprinterString).circuitJson() as AnyCircuitElement[]
+
+const c11355RoundedRectCircuitJson = () => {
+  const padPositions = [
+    { pin: 1, x: -0.999998, y: -2.109978 },
+    { pin: 2, x: -0.499872, y: -2.109978 },
+    { pin: 3, x: 0, y: -2.109978 },
+    { pin: 4, x: 0.500126, y: -2.109978 },
+    { pin: 5, x: 0.999998, y: -2.109978 },
+    { pin: 10, x: -0.999998, y: 2.109978 },
+    { pin: 9, x: -0.499872, y: 2.109978 },
+    { pin: 8, x: 0, y: 2.109978 },
+    { pin: 7, x: 0.500126, y: 2.109978 },
+    { pin: 6, x: 0.999998, y: 2.109978 },
+  ]
+
+  return padPositions.map(
+    ({ pin, x, y }) =>
+      ({
+        corner_radius: 0.1400048,
+        height: 1.620012,
+        layer: "top",
+        pcb_smtpad_id: `pcb_smtpad_${pin}`,
+        port_hints: [`pin${pin}`],
+        shape: "rect",
+        type: "pcb_smtpad",
+        width: 0.2800096,
+        x,
+        y,
+      }) as AnyCircuitElement,
+  )
+}
 
 const replacePillsWithRoundedRects = (
   circuitJson: AnyCircuitElement[],
@@ -78,6 +110,22 @@ test("matches fully rounded rotated rectangular SMT pads to pill pads", () => {
     "pin1location(leftside,bottom)",
   )
   expect(result.best?.copperIntersectionOverUnion).toBe(1)
+})
+
+test("snapshots and recovers C11355 rounded rectangular pads", () => {
+  const circuitJson = c11355RoundedRectCircuitJson()
+  const result = circuitJsonToFootprinter(circuitJson, {
+    maxCandidates: 1,
+    sourceHints: ["C11355", "FSUSB42MUX", "MSOP-10"],
+  })
+
+  expect(result.best?.footprinterString).toContain("_pillpads")
+  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+
+  expect(convertCircuitJsonToPcbSvg(circuitJson)).toMatchSvgSnapshot(
+    import.meta.path,
+    "c11355-rounded-rect-recovery",
+  )
 })
 
 test("preserves pill-shaped pads for quad footprints", () => {
