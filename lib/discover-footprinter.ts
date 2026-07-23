@@ -1,14 +1,18 @@
 import { getFootprintNames, getFootprintSizes } from "@tscircuit/footprinter"
+import type { PcbHole, PcbPlatedHole, PcbSmtPad, Point } from "circuit-json"
 import {
   type FootprintPreview,
   footprinterStringToPreview,
-  type PreviewPad,
 } from "./circuit-json-preview.js"
 import { summarizeCopperComparison } from "./compare-copper.js"
 import {
   type Bounds,
-  getFootprintBounds,
+  getPcbHoleGeometry,
+  getPcbPadGeometry,
   getPolygonWorldPoints,
+  getShapeListBounds,
+  type PcbPadGeometry,
+  rotatePoint,
 } from "./preview-geometry.js"
 
 const SEARCH_GRID_SIZE = 112
@@ -137,9 +141,12 @@ const median = (values: number[]) => {
     : sorted[middle]
 }
 
-const getPadBounds = (pad: PreviewPad): Bounds => getFootprintBounds([pad])
+const getPadBounds = (pad: PcbPadGeometry): Bounds => getShapeListBounds([pad])
 
-const getBounds = (pads: PreviewPad[]): Bounds => getFootprintBounds(pads)
+const getBounds = (pads: PcbPadGeometry[]): Bounds => getShapeListBounds(pads)
+
+const getPadGeometries = (preview: FootprintPreview) =>
+  preview.pads.map(getPcbPadGeometry)
 
 const clusterCoordinates = (values: number[], tolerance: number) => {
   const sorted = [...values].sort((left, right) => left - right)
@@ -157,7 +164,7 @@ const clusterCoordinates = (values: number[], tolerance: number) => {
   return clusters.map(median)
 }
 
-const getPitchEstimate = (pads: PreviewPad[], tolerance: number) => {
+const getPitchEstimate = (pads: PcbPadGeometry[], tolerance: number) => {
   const medianPadArea = median(pads.map((pad) => pad.width * pad.height))
   const regularPads = pads.filter(
     (pad) => pad.width * pad.height <= medianPadArea * 2.5,
@@ -199,8 +206,9 @@ const getPitchEstimate = (pads: PreviewPad[], tolerance: number) => {
 }
 
 const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
-  const bounds = getBounds(target.pads)
-  const padBounds = target.pads.map(getPadBounds)
+  const pads = getPadGeometries(target)
+  const bounds = getBounds(pads)
+  const padBounds = pads.map(getPadBounds)
   const medianPadWidth = median(padBounds.map((bound) => bound.width))
   const medianPadHeight = median(padBounds.map((bound) => bound.height))
   const tolerance = Math.max(
@@ -212,7 +220,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
   const medianPadArea = median(
     padBounds.map((bound) => bound.width * bound.height),
   )
-  const thermalPadEntry = target.pads
+  const thermalPadEntry = pads
     .map((pad) => ({ bound: getPadBounds(pad), pad }))
     .filter(
       ({ bound, pad }) =>
@@ -227,8 +235,8 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     )[0]
   // The exposed center pad describes heat transfer, not the lead topology.
   const topologyPads = thermalPadEntry
-    ? target.pads.filter((pad) => pad !== thermalPadEntry.pad)
-    : target.pads
+    ? pads.filter((pad) => pad !== thermalPadEntry.pad)
+    : pads
   const topologyBounds = getBounds(topologyPads)
   const topologyCenterX = (topologyBounds.minX + topologyBounds.maxX) / 2
   const topologyCenterY = (topologyBounds.minY + topologyBounds.maxY) / 2
@@ -323,7 +331,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     topology = "four-sided"
   }
 
-  const pitch = getPitchEstimate(target.pads, tolerance)
+  const pitch = getPitchEstimate(pads, tolerance)
   const medianPadLongSide = median(
     padBounds.map((bound) => Math.max(bound.width, bound.height)),
   )
@@ -334,12 +342,12 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     padBounds.map((bound) => Math.sqrt(bound.width * bound.height)),
   )
   const medianHoleDiameter = median(
-    target.pads.flatMap((pad) =>
+    pads.flatMap((pad) =>
       pad.hole ? [Math.sqrt(pad.hole.width * pad.hole.height)] : [],
     ),
   )
-  const platedHoleCount = target.pads.filter(
-    (pad) => pad.kind === "plated-hole",
+  const platedHoleCount = pads.filter(
+    (pad) => pad.type === "pcb_plated_hole",
   ).length
   const insetQuadAdjustment = topology === "four-sided" ? 0.2 : 0
 
@@ -379,15 +387,179 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
   }
 }
 
-const normalizePads = (pads: PreviewPad[]) => {
+const normalizePads = (pads: PcbPadGeometry[]) => {
   const bounds = getBounds(pads)
   const centerX = (bounds.minX + bounds.maxX) / 2
   const centerY = (bounds.minY + bounds.maxY) / 2
   return pads.map((pad) => ({
     ...pad,
+    hole: pad.hole
+      ? {
+          ...pad.hole,
+          x: pad.hole.x - centerX,
+          y: pad.hole.y - centerY,
+        }
+      : undefined,
     x: pad.x - centerX,
     y: pad.y - centerY,
   }))
+}
+
+const rotateCoordinates = (point: Point, rotation: FootprintRotation) =>
+  rotatePoint(point.x, point.y, (rotation * Math.PI) / 180)
+
+const rotateSmtPad = (
+  pad: PcbSmtPad,
+  rotation: FootprintRotation,
+): PcbSmtPad => {
+  if (rotation === 0) return pad
+  if (pad.shape === "polygon") {
+    return {
+      ...pad,
+      points: pad.points.map((point) => rotateCoordinates(point, rotation)),
+    }
+  }
+
+  const position = rotateCoordinates(pad, rotation)
+  switch (pad.shape) {
+    case "circle":
+      return { ...pad, ...position }
+    case "rect":
+      return {
+        ...pad,
+        ...position,
+        ccw_rotation: (getPcbPadGeometry(pad).rotation + rotation) % 360,
+        shape: "rotated_rect",
+      }
+    case "pill":
+      return {
+        ...pad,
+        ...position,
+        ccw_rotation: (getPcbPadGeometry(pad).rotation + rotation) % 360,
+        shape: "rotated_pill",
+      }
+    case "rotated_rect":
+    case "rotated_pill":
+      return {
+        ...pad,
+        ...position,
+        ccw_rotation: (pad.ccw_rotation + rotation) % 360,
+      }
+  }
+}
+
+const rotatePlatedHole = (
+  pad: PcbPlatedHole,
+  rotation: FootprintRotation,
+): PcbPlatedHole => {
+  if (rotation === 0) return pad
+  const position = rotateCoordinates(pad, rotation)
+
+  switch (pad.shape) {
+    case "circle":
+      return { ...pad, ...position }
+    case "oval":
+    case "pill":
+      return {
+        ...pad,
+        ...position,
+        ccw_rotation: (pad.ccw_rotation + rotation) % 360,
+      }
+    case "circular_hole_with_rect_pad": {
+      const offset = rotateCoordinates(
+        { x: pad.hole_offset_x, y: pad.hole_offset_y },
+        rotation,
+      )
+      return {
+        ...pad,
+        ...position,
+        hole_offset_x: offset.x,
+        hole_offset_y: offset.y,
+        rect_ccw_rotation: ((pad.rect_ccw_rotation ?? 0) + rotation) % 360,
+      }
+    }
+    case "pill_hole_with_rect_pad": {
+      const offset = rotateCoordinates(
+        { x: pad.hole_offset_x, y: pad.hole_offset_y },
+        rotation,
+      )
+      return {
+        ...pad,
+        ...position,
+        ...(rotation === 90 || rotation === 270
+          ? {
+              hole_height: pad.hole_width,
+              hole_width: pad.hole_height,
+              rect_pad_height: pad.rect_pad_width,
+              rect_pad_width: pad.rect_pad_height,
+            }
+          : {}),
+        hole_offset_x: offset.x,
+        hole_offset_y: offset.y,
+      }
+    }
+    case "rotated_pill_hole_with_rect_pad": {
+      const offset = rotateCoordinates(
+        { x: pad.hole_offset_x, y: pad.hole_offset_y },
+        rotation,
+      )
+      return {
+        ...pad,
+        ...position,
+        hole_ccw_rotation: (pad.hole_ccw_rotation + rotation) % 360,
+        hole_offset_x: offset.x,
+        hole_offset_y: offset.y,
+        rect_ccw_rotation: (pad.rect_ccw_rotation + rotation) % 360,
+      }
+    }
+    case "hole_with_polygon_pad": {
+      const offset = rotateCoordinates(
+        { x: pad.hole_offset_x, y: pad.hole_offset_y },
+        rotation,
+      )
+      return {
+        ...pad,
+        ...position,
+        ccw_rotation:
+          pad.hole_shape === "rotated_pill"
+            ? ((pad.ccw_rotation ?? 0) + rotation) % 360
+            : pad.ccw_rotation,
+        hole_offset_x: offset.x,
+        hole_offset_y: offset.y,
+        pad_outline: pad.pad_outline.map((point) =>
+          rotateCoordinates(point, rotation),
+        ),
+      }
+    }
+  }
+}
+
+const rotateHole = (hole: PcbHole, rotation: FootprintRotation): PcbHole => {
+  if (rotation === 0) return hole
+  const position = rotateCoordinates(hole, rotation)
+
+  switch (hole.hole_shape) {
+    case "circle":
+    case "square":
+      return { ...hole, ...position }
+    case "rect":
+    case "oval":
+    case "pill":
+      return rotation === 90 || rotation === 270
+        ? {
+            ...hole,
+            ...position,
+            hole_height: hole.hole_width,
+            hole_width: hole.hole_height,
+          }
+        : { ...hole, ...position }
+    case "rotated_pill":
+      return {
+        ...hole,
+        ...position,
+        ccw_rotation: (hole.ccw_rotation + rotation) % 360,
+      }
+  }
 }
 
 const rotateFootprint = (
@@ -395,36 +567,26 @@ const rotateFootprint = (
   rotation: FootprintRotation,
 ): FootprintPreview => {
   if (rotation === 0) return footprint
-  const radians = (rotation * Math.PI) / 180
   return {
     ...footprint,
-    pads: footprint.pads.map((pad) => ({
-      ...pad,
-      hole: pad.hole
-        ? {
-            ...pad.hole,
-            offsetX:
-              pad.hole.offsetX * Math.cos(radians) -
-              pad.hole.offsetY * Math.sin(radians),
-            offsetY:
-              pad.hole.offsetX * Math.sin(radians) +
-              pad.hole.offsetY * Math.cos(radians),
-            rotation: (pad.hole.rotation + rotation) % 360,
-          }
-        : undefined,
-      rotation: (pad.rotation + rotation) % 360,
-      x: pad.x * Math.cos(radians) - pad.y * Math.sin(radians),
-      y: pad.x * Math.sin(radians) + pad.y * Math.cos(radians),
-    })),
+    holes: footprint.holes.map((hole) => rotateHole(hole, rotation)),
+    pads: footprint.pads.map((pad) =>
+      pad.type === "pcb_smtpad"
+        ? rotateSmtPad(pad, rotation)
+        : rotatePlatedHole(pad, rotation),
+    ),
   }
 }
 
-const getOrientedPadSize = (pad: PreviewPad) => {
+const getOrientedPadSize = (pad: PcbPadGeometry) => {
   const bounds = getPadBounds({ ...pad, x: 0, y: 0 })
   return { height: bounds.height, width: bounds.width }
 }
 
-const matchPadsByPosition = (left: PreviewPad[], right: PreviewPad[]) => {
+const matchPadsByPosition = (
+  left: PcbPadGeometry[],
+  right: PcbPadGeometry[],
+) => {
   const availableRight = new Set(right.map((_, index) => index))
   return left.map((leftPad) => {
     let bestIndex = -1
@@ -451,8 +613,8 @@ const getGeometryLoss = (
 ) => {
   if (candidate.pads.length !== target.pads.length) return 1_000
 
-  const candidatePads = normalizePads(candidate.pads)
-  const targetPads = normalizePads(target.pads)
+  const candidatePads = normalizePads(getPadGeometries(candidate))
+  const targetPads = normalizePads(getPadGeometries(target))
   const targetBounds = getBounds(targetPads)
   const positionScale = Math.max(
     Math.hypot(targetBounds.width, targetBounds.height),
@@ -474,7 +636,7 @@ const getGeometryLoss = (
       Math.max(targetSize.height, 0.05)
 
     loss += dx * dx * 4 + dy * dy * 4 + dw * dw + dh * dh
-    if (candidatePad.kind !== targetPad.kind) loss += 4
+    if (candidatePad.type !== targetPad.type) loss += 4
     if (candidatePad.shape !== targetPad.shape) loss += 0.08
     if (Boolean(candidatePad.hole) !== Boolean(targetPad.hole)) {
       loss += 4
@@ -486,9 +648,15 @@ const getGeometryLoss = (
       const holeHeightDifference =
         (candidatePad.hole.height - targetPad.hole.height) / holeHeightScale
       const holeOffsetXDifference =
-        (candidatePad.hole.offsetX - targetPad.hole.offsetX) / positionScale
+        (candidatePad.hole.x -
+          candidatePad.x -
+          (targetPad.hole.x - targetPad.x)) /
+        positionScale
       const holeOffsetYDifference =
-        (candidatePad.hole.offsetY - targetPad.hole.offsetY) / positionScale
+        (candidatePad.hole.y -
+          candidatePad.y -
+          (targetPad.hole.y - targetPad.y)) /
+        positionScale
 
       loss +=
         holeWidthDifference * holeWidthDifference +
@@ -571,14 +739,14 @@ const buildParameterizedString = (
   return suffix ? `${seed}_${suffix}` : seed
 }
 
-const geometrySignature = (preview: FootprintPreview) =>
-  preview.pads
+const geometrySignature = (preview: FootprintPreview) => {
+  const padSignature = getPadGeometries(preview)
     .map((pad) => {
       const holeSignature = pad.hole
         ? [
             pad.hole.shape,
-            pad.hole.offsetX,
-            pad.hole.offsetY,
+            pad.hole.x - pad.x,
+            pad.hole.y - pad.y,
             pad.hole.width,
             pad.hole.height,
             pad.hole.rotation,
@@ -589,7 +757,7 @@ const geometrySignature = (preview: FootprintPreview) =>
           ? pad.points?.map((point) => `${point.x}:${point.y}`).join(",")
           : "no-points"
       return [
-        pad.kind,
+        pad.type,
         pad.shape,
         pad.x,
         pad.y,
@@ -603,10 +771,20 @@ const geometrySignature = (preview: FootprintPreview) =>
         .join(":")
     })
     .join("|")
+  const holeSignature = preview.holes
+    .map(getPcbHoleGeometry)
+    .map((hole) =>
+      [hole.shape, hole.x, hole.y, hole.width, hole.height, hole.rotation].join(
+        ":",
+      ),
+    )
+    .join("|")
+  return `${padSignature}#${holeSignature}`
+}
 
 const padShapeSignature = (preview: FootprintPreview) =>
-  preview.pads
-    .map((pad) => `${pad.kind}:${pad.shape}`)
+  getPadGeometries(preview)
+    .map((pad) => `${pad.type}:${pad.shape}`)
     .toSorted()
     .join("|")
 
@@ -618,7 +796,7 @@ const areSamePoint = (
   right: { x: number; y: number },
 ) => areClose(left.x, right.x) && areClose(left.y, right.y)
 
-const haveSamePolygon = (left: PreviewPad, right: PreviewPad) => {
+const haveSamePolygon = (left: PcbPadGeometry, right: PcbPadGeometry) => {
   if (left.shape !== "polygon" && right.shape !== "polygon") return true
   if (left.shape !== "polygon" || right.shape !== "polygon") return false
   const leftPoints = getPolygonWorldPoints(left)
@@ -644,10 +822,17 @@ const haveSameOrientedPads = (
   left: FootprintPreview,
   right: FootprintPreview,
 ) => {
-  if (left.pads.length !== right.pads.length) return false
+  if (
+    left.pads.length !== right.pads.length ||
+    left.holes.length !== right.holes.length
+  ) {
+    return false
+  }
 
-  return left.pads.every((leftPad, index) => {
-    const rightPad = right.pads[index]
+  const leftPads = getPadGeometries(left)
+  const rightPads = getPadGeometries(right)
+  const padsMatch = leftPads.every((leftPad, index) => {
+    const rightPad = rightPads[index]
     if (!rightPad) return false
     const leftSize = getOrientedPadSize(leftPad)
     const rightSize = getOrientedPadSize(rightPad)
@@ -656,13 +841,19 @@ const haveSameOrientedPads = (
         ? true
         : Boolean(leftPad.hole && rightPad.hole) &&
           leftPad.hole?.shape === rightPad.hole?.shape &&
-          areClose(leftPad.hole?.offsetX ?? 0, rightPad.hole?.offsetX ?? 0) &&
-          areClose(leftPad.hole?.offsetY ?? 0, rightPad.hole?.offsetY ?? 0) &&
+          areClose(
+            (leftPad.hole?.x ?? leftPad.x) - leftPad.x,
+            (rightPad.hole?.x ?? rightPad.x) - rightPad.x,
+          ) &&
+          areClose(
+            (leftPad.hole?.y ?? leftPad.y) - leftPad.y,
+            (rightPad.hole?.y ?? rightPad.y) - rightPad.y,
+          ) &&
           areClose(leftPad.hole?.width ?? 0, rightPad.hole?.width ?? 0) &&
           areClose(leftPad.hole?.height ?? 0, rightPad.hole?.height ?? 0) &&
           areClose(leftPad.hole?.rotation ?? 0, rightPad.hole?.rotation ?? 0)
     return (
-      leftPad.kind === rightPad.kind &&
+      leftPad.type === rightPad.type &&
       leftPad.shape === rightPad.shape &&
       leftPad.portHints.join("|") === rightPad.portHints.join("|") &&
       areClose(leftPad.x, rightPad.x) &&
@@ -671,6 +862,23 @@ const haveSameOrientedPads = (
       areClose(leftSize.height, rightSize.height) &&
       haveSamePolygon(leftPad, rightPad) &&
       holesMatch
+    )
+  })
+  if (!padsMatch) return false
+
+  const leftHoles = left.holes.map(getPcbHoleGeometry)
+  const rightHoles = right.holes.map(getPcbHoleGeometry)
+  return leftHoles.every((leftHole, index) => {
+    const rightHole = rightHoles[index]
+    if (!rightHole) return false
+    const leftBounds = getShapeListBounds([{ ...leftHole, x: 0, y: 0 }])
+    const rightBounds = getShapeListBounds([{ ...rightHole, x: 0, y: 0 }])
+    return (
+      leftHole.shape === rightHole.shape &&
+      areClose(leftHole.x, rightHole.x) &&
+      areClose(leftHole.y, rightHole.y) &&
+      areClose(leftBounds.width, rightBounds.width) &&
+      areClose(leftBounds.height, rightBounds.height)
     )
   })
 }
@@ -801,7 +1009,7 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
   }
 
   if (padCount === 2 && analysis.platedHoleCount === 0) {
-    const padBounds = target.pads.map(getPadBounds)
+    const padBounds = getPadGeometries(target).map(getPadBounds)
     const passiveDimensions = `p${formatMillimeters(
       analysis.heuristics.p,
     )}_pw${formatMillimeters(
@@ -816,13 +1024,13 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     }
   }
 
-  if (target.pads.some((pad) => pad.shape === "pill")) {
+  if (getPadGeometries(target).some((pad) => pad.shape === "pill")) {
     for (const seed of [...seeds]) {
       const pillPadSeed = `${seed}_pillpads`
       const preview = tryBuild(pillPadSeed)
       if (
         preview?.pads.length === padCount &&
-        preview.pads.some((pad) => pad.shape === "pill")
+        getPadGeometries(preview).some((pad) => pad.shape === "pill")
       ) {
         seeds.add(pillPadSeed)
       }
@@ -856,7 +1064,7 @@ const selectSeedsToOptimize = (
     }
   }
 
-  if (target.pads.some((pad) => pad.shape === "pill")) {
+  if (getPadGeometries(target).some((pad) => pad.shape === "pill")) {
     for (const candidate of candidates) {
       if (padShapeSignature(candidate.preview) !== targetPadShapeSignature) {
         continue
@@ -1108,7 +1316,7 @@ export const discoverFootprinterString = (
     return FOOTPRINT_ROTATIONS.flatMap((searchRotation): SeedCandidate[] => {
       const preview = rotateFootprint(unrotatedPreview, searchRotation)
       const platedHoleCount = preview.pads.filter(
-        (pad) => pad.kind === "plated-hole",
+        (pad) => pad.type === "pcb_plated_hole",
       ).length
       if (platedHoleCount !== analysis.platedHoleCount) return []
 

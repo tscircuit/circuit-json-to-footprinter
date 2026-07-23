@@ -42,7 +42,7 @@
   "dependencies": {
     "@tscircuit/math-utils": "^0.0.36",
     "@tscircuit/footprinter": "^0.0.385",
-    "circuit-json": "^0.0.448",
+    "circuit-json": "^0.0.453",
     "format-si-unit": "^0.0.10"
   },
   "devDependencies": {

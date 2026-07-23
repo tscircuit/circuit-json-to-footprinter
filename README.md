@@ -42,6 +42,11 @@ the discovery engine. Browser-only comparison code can import the lightweight
 `circuit-json-to-footprinter/compare` entry point without bundling the discovery
 engine or `@tscircuit/footprinter`.
 
+`FootprintPreview.pads` contains the original `PcbSmtPad | PcbPlatedHole`
+elements and `FootprintPreview.holes` contains the original `PcbHole` elements
+from [`circuit-json`](https://github.com/tscircuit/circuit-json). The converter
+does not expose a second, preview-specific pad or hole type.
+
 ## Development
 
 ```bash
