@@ -90,12 +90,12 @@ test("renders C92489 BME280 TSX to Circuit JSON with core", async () => {
   expect(await renderFootprintToCircuitJson(BME280)).toHaveLength(8)
 })
 
-test("recovers C92489 BME280 with pill-shaped DFN pads", async () => {
+test("recovers C92489 BME280 with pill-shaped LGA pads", async () => {
   const result = await expectFootprintRecovery({
     FootprintComponent: BME280,
     sourceHints: ["C92489 BME280 LGA-8(2.5x2.5)"],
   })
 
-  expect(result.best?.family).toBe("dfn")
+  expect(result.best?.family).toBe("lga")
   expect(result.best?.footprinterString).toContain("_pillpads")
 })

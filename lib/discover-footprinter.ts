@@ -55,6 +55,9 @@ interface TargetAnalysis {
   gridColumns: number
   gridRows: number
   heuristics: Record<NumericParameter, number>
+  horizontalSidePadCount: number
+  lgaPadLength: number
+  lgaPadWidth: number
   perimeterPadCount: number
   platedHoleCount: number
   thermalPad?: {
@@ -62,6 +65,7 @@ interface TargetAnalysis {
     width: number
   }
   topology: Topology
+  verticalSidePadCount: number
 }
 
 interface SeedCandidate {
@@ -104,14 +108,24 @@ const getOrientedHeuristics = (
   seed: SeedCandidate,
   analysis: TargetAnalysis,
 ): Record<NumericParameter, number> => {
+  const heuristics =
+    seed.family === "lga"
+      ? {
+          ...analysis.heuristics,
+          h: analysis.bounds.height,
+          pl: analysis.lgaPadLength,
+          pw: analysis.lgaPadWidth,
+          w: analysis.bounds.width,
+        }
+      : analysis.heuristics
   if (seed.searchRotation !== 90 && seed.searchRotation !== 270) {
-    return analysis.heuristics
+    return heuristics
   }
 
   return {
-    ...analysis.heuristics,
-    h: analysis.heuristics.w,
-    w: analysis.heuristics.h,
+    ...heuristics,
+    h: heuristics.w,
+    w: heuristics.h,
   }
 }
 
@@ -279,6 +293,44 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
       Math.abs(pad.y - (topologyBounds.maxY - medianPadHeight / 2)) <=
         edgeToleranceY,
   )
+  const minPadCenterX = Math.min(...topologyPads.map((pad) => pad.x))
+  const maxPadCenterX = Math.max(...topologyPads.map((pad) => pad.x))
+  const minPadCenterY = Math.min(...topologyPads.map((pad) => pad.y))
+  const maxPadCenterY = Math.max(...topologyPads.map((pad) => pad.y))
+  const topologyPadEntries = topologyPads.map((pad) => ({
+    bounds: getPadBounds(pad),
+    pad,
+  }))
+  const leftRightEdgePads = topologyPadEntries.filter(
+    ({ pad }) =>
+      Math.abs(pad.x - minPadCenterX) <= tolerance ||
+      Math.abs(pad.x - maxPadCenterX) <= tolerance,
+  )
+  const topBottomEdgePads = topologyPadEntries.filter(
+    ({ pad }) =>
+      Math.abs(pad.y - minPadCenterY) <= tolerance ||
+      Math.abs(pad.y - maxPadCenterY) <= tolerance,
+  )
+  const leftSidePadCount = topologyPadEntries.filter(
+    ({ bounds: bound, pad }) =>
+      Math.abs(pad.x - minPadCenterX) <= edgeToleranceX &&
+      bound.width >= bound.height * 0.95,
+  ).length
+  const rightSidePadCount = topologyPadEntries.filter(
+    ({ bounds: bound, pad }) =>
+      Math.abs(pad.x - maxPadCenterX) <= edgeToleranceX &&
+      bound.width >= bound.height * 0.95,
+  ).length
+  const bottomSidePadCount = topologyPadEntries.filter(
+    ({ bounds: bound, pad }) =>
+      Math.abs(pad.y - minPadCenterY) <= edgeToleranceY &&
+      bound.height >= bound.width * 0.95,
+  ).length
+  const topSidePadCount = topologyPadEntries.filter(
+    ({ bounds: bound, pad }) =>
+      Math.abs(pad.y - maxPadCenterY) <= edgeToleranceY &&
+      bound.height >= bound.width * 0.95,
+  ).length
   const gridOccupancy =
     topologyPads.length / Math.max(xCoordinates.length * yCoordinates.length, 1)
   const hasPadsOnFourSides =
@@ -341,6 +393,13 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
       pw: medianPadShortSide,
       w: bounds.width + insetQuadAdjustment,
     },
+    horizontalSidePadCount: Math.max(leftSidePadCount, rightSidePadCount),
+    lgaPadLength: leftRightEdgePads.length
+      ? median(leftRightEdgePads.map(({ bounds: bound }) => bound.width))
+      : median(topBottomEdgePads.map(({ bounds: bound }) => bound.height)),
+    lgaPadWidth: leftRightEdgePads.length
+      ? median(leftRightEdgePads.map(({ bounds: bound }) => bound.height))
+      : median(topBottomEdgePads.map(({ bounds: bound }) => bound.width)),
     perimeterPadCount: sidePads.length,
     platedHoleCount,
     thermalPad: thermalPadEntry
@@ -350,6 +409,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
         }
       : undefined,
     topology,
+    verticalSidePadCount: Math.max(bottomSidePadCount, topSidePadCount),
   }
 }
 
@@ -494,6 +554,7 @@ const getDomainScore = (target: FootprintPreview, family: string) => {
   const aliases: Record<string, string[]> = {
     cap: ["capacitor", "cap"],
     dfn: ["dfn"],
+    lga: ["lga"],
     qfn: ["qfn"],
     res: ["resistor", "res"],
     soic: ["soic", "so-"],
@@ -648,10 +709,11 @@ const getPreferredFamilies = (analysis: TargetAnalysis) => {
   }
   if (analysis.topology === "grid") return new Set(["bga"])
   if (analysis.topology === "four-sided") {
-    return new Set(["lqfp", "mlp", "qfn", "qfp", "quad", "tqfp"])
+    return new Set(["lga", "lqfp", "mlp", "qfn", "qfp", "quad", "tqfp"])
   }
   if (analysis.topology === "two-sided") {
     return new Set([
+      "lga",
       "soic",
       "tssop",
       "ssop",
@@ -707,6 +769,28 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     seeds.add(`bga${padCount}_grid${analysis.gridColumns}x${analysis.gridRows}`)
   }
 
+  if (
+    analysis.topology === "four-sided" &&
+    2 * (analysis.horizontalSidePadCount + analysis.verticalSidePadCount) ===
+      analysis.perimeterPadCount
+  ) {
+    seeds.add(
+      `lga${analysis.perimeterPadCount}_grid${analysis.horizontalSidePadCount}x${analysis.verticalSidePadCount}`,
+    )
+  }
+
+  const hasLgaHint = target.sourceHints?.some((hint) =>
+    hint.toLowerCase().includes("lga"),
+  )
+  if (analysis.topology === "two-sided" && hasLgaHint) {
+    const padsPerSide = analysis.perimeterPadCount / 2
+    if (Number.isInteger(padsPerSide)) {
+      const grid =
+        analysis.gridColumns <= 2 ? `${padsPerSide}x0` : `0x${padsPerSide}`
+      seeds.add(`lga${analysis.perimeterPadCount}_grid${grid}`)
+    }
+  }
+
   if (analysis.topology === "two-sided" && padCount % 2 === 1) {
     for (
       let missingPosition = 1;
@@ -758,6 +842,21 @@ const selectSeedsToOptimize = (
   const targetPadShapeSignature = padShapeSignature(target)
   const selectedShapeFamilies = new Set<string>()
 
+  if (analysis.topology === "four-sided" || analysis.topology === "two-sided") {
+    const lgaGridCandidate = candidates.find(
+      (candidate) =>
+        candidate.family === "lga" &&
+        candidate.footprinterString.includes("_grid") &&
+        candidate.searchRotation === 0,
+    )
+    if (lgaGridCandidate) {
+      selected.set(
+        `${lgaGridCandidate.footprinterString}:${lgaGridCandidate.searchRotation}`,
+        lgaGridCandidate,
+      )
+    }
+  }
+
   if (target.pads.some((pad) => pad.shape === "pill")) {
     for (const candidate of candidates) {
       if (padShapeSignature(candidate.preview) !== targetPadShapeSignature) {
@@ -795,6 +894,13 @@ const selectSeedsToOptimize = (
             (entry) =>
               entry.family === family &&
               entry.footprinterString.includes("_missing("),
+          )
+        : undefined) ??
+      (family === "lga"
+        ? candidates.find(
+            (entry) =>
+              entry.family === family &&
+              entry.footprinterString.includes("_grid"),
           )
         : undefined) ??
       candidates.find(
