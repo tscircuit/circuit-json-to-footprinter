@@ -1,5 +1,4 @@
 import { getFootprintNames, getFootprintSizes } from "@tscircuit/footprinter"
-import type { PcbHole, PcbPlatedHole, PcbSmtPad, Point } from "circuit-json"
 import {
   type FootprintPreview,
   footprinterStringToPreview,
@@ -7,9 +6,9 @@ import {
 import { summarizeCopperComparison } from "./compare-copper.js"
 import {
   type Bounds,
-  getPcbHoleGeometry,
-  getPcbPadGeometry,
   getShapeListBounds,
+  getTransformedPcbHoleGeometry,
+  getTransformedPcbPadGeometry,
   type PcbPadGeometry,
   rotatePoint,
   type ShapeGeometry,
@@ -146,7 +145,10 @@ const getPadBounds = (pad: ShapeGeometry): Bounds => getShapeListBounds([pad])
 const getBounds = (pads: ShapeGeometry[]): Bounds => getShapeListBounds(pads)
 
 const getPadGeometries = (preview: FootprintPreview) =>
-  preview.pads.map(getPcbPadGeometry)
+  preview.pads.map((pad) => getTransformedPcbPadGeometry(pad, preview))
+
+const getHoleGeometries = (preview: FootprintPreview) =>
+  preview.holes.map((hole) => getTransformedPcbHoleGeometry(hole, preview))
 
 const getCopperShapes = (preview: FootprintPreview) =>
   getPadGeometries(preview).map(({ copper }) => copper)
@@ -411,228 +413,26 @@ const normalizePads = (pads: PcbPadGeometry[]) => {
   }))
 }
 
-const rotateCoordinates = (point: Point, rotation: FootprintRotation) =>
-  rotatePoint(point.x, point.y, (rotation * Math.PI) / 180)
-
-const rotateSmtPad = (
-  pad: PcbSmtPad,
-  rotation: FootprintRotation,
-): PcbSmtPad => {
-  if (rotation === 0) return pad
-  if (pad.shape === "polygon") {
-    return {
-      ...pad,
-      points: pad.points.map((point) => rotateCoordinates(point, rotation)),
-    }
-  }
-
-  const position = rotateCoordinates(pad, rotation)
-  switch (pad.shape) {
-    case "circle":
-      return { ...pad, ...position }
-    case "rect":
-      return {
-        ...pad,
-        ...position,
-        ccw_rotation: rotation,
-        shape: "rotated_rect",
-      }
-    case "pill":
-      return {
-        ...pad,
-        ...position,
-        ccw_rotation: rotation,
-        shape: "rotated_pill",
-      }
-    case "rotated_rect":
-    case "rotated_pill":
-      return {
-        ...pad,
-        ...position,
-        ccw_rotation: (pad.ccw_rotation + rotation) % 360,
-      }
-  }
-}
-
-const rotatePlatedHole = (
-  pad: PcbPlatedHole,
-  rotation: FootprintRotation,
-): PcbPlatedHole => {
-  if (rotation === 0) return pad
-  const position = rotateCoordinates(pad, rotation)
-
-  switch (pad.shape) {
-    case "circle":
-      return { ...pad, ...position }
-    case "oval":
-    case "pill":
-      return {
-        ...pad,
-        ...position,
-        ccw_rotation: (pad.ccw_rotation + rotation) % 360,
-      }
-    case "circular_hole_with_rect_pad": {
-      const offset = rotateCoordinates(
-        { x: pad.hole_offset_x, y: pad.hole_offset_y },
-        rotation,
-      )
-      return {
-        ...pad,
-        ...position,
-        hole_offset_x: offset.x,
-        hole_offset_y: offset.y,
-        rect_ccw_rotation: ((pad.rect_ccw_rotation ?? 0) + rotation) % 360,
-      }
-    }
-    case "pill_hole_with_rect_pad": {
-      const offset = rotateCoordinates(
-        { x: pad.hole_offset_x, y: pad.hole_offset_y },
-        rotation,
-      )
-      return {
-        ...pad,
-        ...position,
-        ...(rotation === 90 || rotation === 270
-          ? {
-              hole_height: pad.hole_width,
-              hole_width: pad.hole_height,
-              rect_pad_height: pad.rect_pad_width,
-              rect_pad_width: pad.rect_pad_height,
-            }
-          : {}),
-        hole_offset_x: offset.x,
-        hole_offset_y: offset.y,
-      }
-    }
-    case "rotated_pill_hole_with_rect_pad": {
-      const offset = rotateCoordinates(
-        { x: pad.hole_offset_x, y: pad.hole_offset_y },
-        rotation,
-      )
-      return {
-        ...pad,
-        ...position,
-        hole_ccw_rotation: (pad.hole_ccw_rotation + rotation) % 360,
-        hole_offset_x: offset.x,
-        hole_offset_y: offset.y,
-        rect_ccw_rotation: (pad.rect_ccw_rotation + rotation) % 360,
-      }
-    }
-    case "hole_with_polygon_pad": {
-      const offset = rotateCoordinates(
-        { x: pad.hole_offset_x, y: pad.hole_offset_y },
-        rotation,
-      )
-      return {
-        ...pad,
-        ...position,
-        ccw_rotation:
-          pad.hole_shape === "rotated_pill"
-            ? ((pad.ccw_rotation ?? 0) + rotation) % 360
-            : pad.ccw_rotation,
-        hole_offset_x: offset.x,
-        hole_offset_y: offset.y,
-        pad_outline: pad.pad_outline.map((point) =>
-          rotateCoordinates(point, rotation),
-        ),
-      }
-    }
-  }
-}
-
-const rotateHole = (hole: PcbHole, rotation: FootprintRotation): PcbHole => {
-  if (rotation === 0) return hole
-  const { x, y } = rotateCoordinates(hole, rotation)
-
-  switch (hole.hole_shape) {
-    case "circle":
-      return {
-        hole_diameter: hole.hole_diameter,
-        hole_shape: "circle",
-        pcb_hole_id: hole.pcb_hole_id,
-        type: "pcb_hole",
-        x,
-        y,
-      }
-    case "square":
-      return {
-        hole_diameter: hole.hole_diameter,
-        hole_shape: "square",
-        pcb_hole_id: hole.pcb_hole_id,
-        type: "pcb_hole",
-        x,
-        y,
-      }
-    case "rect":
-      return {
-        hole_height:
-          rotation === 90 || rotation === 270
-            ? hole.hole_width
-            : hole.hole_height,
-        hole_shape: "rect",
-        hole_width:
-          rotation === 90 || rotation === 270
-            ? hole.hole_height
-            : hole.hole_width,
-        pcb_hole_id: hole.pcb_hole_id,
-        type: "pcb_hole",
-        x,
-        y,
-      }
-    case "oval":
-      return {
-        hole_height:
-          rotation === 90 || rotation === 270
-            ? hole.hole_width
-            : hole.hole_height,
-        hole_shape: "oval",
-        hole_width:
-          rotation === 90 || rotation === 270
-            ? hole.hole_height
-            : hole.hole_width,
-        pcb_hole_id: hole.pcb_hole_id,
-        type: "pcb_hole",
-        x,
-        y,
-      }
-    case "pill":
-      return {
-        ccw_rotation: rotation,
-        hole_height: hole.hole_height,
-        hole_shape: "rotated_pill",
-        hole_width: hole.hole_width,
-        pcb_hole_id: hole.pcb_hole_id,
-        type: "pcb_hole",
-        x,
-        y,
-      }
-    case "rotated_pill":
-      return {
-        ccw_rotation: (hole.ccw_rotation + rotation) % 360,
-        hole_height: hole.hole_height,
-        hole_shape: "rotated_pill",
-        hole_width: hole.hole_width,
-        pcb_hole_id: hole.pcb_hole_id,
-        type: "pcb_hole",
-        x,
-        y,
-      }
-  }
-}
-
 export const rotateFootprint = (
   footprint: FootprintPreview,
   rotation: FootprintRotation,
 ): FootprintPreview => {
   if (rotation === 0) return footprint
+  const offset = rotatePoint(
+    footprint.x ?? 0,
+    footprint.y ?? 0,
+    (rotation * Math.PI) / 180,
+  )
+
   return {
-    ...footprint,
-    holes: footprint.holes.map((hole) => rotateHole(hole, rotation)),
-    pads: footprint.pads.map((pad) =>
-      pad.type === "pcb_smtpad"
-        ? rotateSmtPad(pad, rotation)
-        : rotatePlatedHole(pad, rotation),
-    ),
+    holes: footprint.holes,
+    pads: footprint.pads,
+    rotation: ((footprint.rotation ?? 0) + rotation) % 360,
+    sourceHints: footprint.sourceHints,
+    subtitle: footprint.subtitle,
+    title: footprint.title,
+    x: offset.x,
+    y: offset.y,
   }
 }
 
@@ -839,8 +639,7 @@ const geometrySignature = (preview: FootprintPreview) => {
         .join(":")
     })
     .join("|")
-  const holeSignature = preview.holes
-    .map(getPcbHoleGeometry)
+  const holeSignature = getHoleGeometries(preview)
     .map((hole) =>
       [hole.shape, hole.x, hole.y, hole.width, hole.height, hole.rotation].join(
         ":",
@@ -886,8 +685,8 @@ const haveSamePadPlacement = (
   })
   if (!padsMatch) return false
 
-  const leftHoles = left.holes.map(getPcbHoleGeometry)
-  const rightHoles = right.holes.map(getPcbHoleGeometry)
+  const leftHoles = getHoleGeometries(left)
+  const rightHoles = getHoleGeometries(right)
   return leftHoles.every((leftHole, index) => {
     const rightHole = rightHoles[index]
     if (!rightHole) return false

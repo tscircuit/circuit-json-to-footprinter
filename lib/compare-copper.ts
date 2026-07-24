@@ -1,12 +1,10 @@
 import { getBoundsCenter, isPointInsidePolygon } from "@tscircuit/math-utils"
-import type { PcbPlatedHole, PcbSmtPad } from "circuit-json"
 import type { FootprintPreview } from "./circuit-json-preview.js"
 import {
   type Bounds,
-  getFootprintBounds,
-  getPcbHoleGeometry,
-  getPcbPadGeometry,
   getShapeListBounds,
+  getTransformedPcbHoleGeometry,
+  getTransformedPcbPadGeometry,
   rotatePoint,
   type ShapeGeometry,
   toRadians,
@@ -44,28 +42,6 @@ interface RasterizedShapes {
   rightOnlyRatio: number
 }
 
-const translatePad = (
-  pad: PcbSmtPad | PcbPlatedHole,
-  deltaX: number,
-  deltaY: number,
-): PcbSmtPad | PcbPlatedHole => {
-  if (pad.type === "pcb_smtpad" && pad.shape === "polygon") {
-    return {
-      ...pad,
-      points: pad.points.map((point) => ({
-        x: point.x + deltaX,
-        y: point.y + deltaY,
-      })),
-    }
-  }
-
-  return {
-    ...pad,
-    x: pad.x + deltaX,
-    y: pad.y + deltaY,
-  }
-}
-
 const addPadding = (bounds: Bounds): Bounds => {
   const padX = Math.max(bounds.width * 0.18, 0.65)
   const padY = Math.max(bounds.height * 0.18, 0.65)
@@ -84,31 +60,38 @@ const translateFootprint = (
   footprint: FootprintPreview,
   deltaX: number,
   deltaY: number,
-): FootprintPreview => ({
-  ...footprint,
-  holes: footprint.holes.map((hole) => ({
-    ...hole,
-    x: hole.x + deltaX,
-    y: hole.y + deltaY,
-  })),
-  pads: footprint.pads.map((pad) => translatePad(pad, deltaX, deltaY)),
-})
+): FootprintPreview => {
+  return {
+    holes: footprint.holes,
+    pads: footprint.pads,
+    rotation: footprint.rotation,
+    sourceHints: footprint.sourceHints,
+    subtitle: footprint.subtitle,
+    title: footprint.title,
+    x: (footprint.x ?? 0) + deltaX,
+    y: (footprint.y ?? 0) + deltaY,
+  }
+}
 
 const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
-  const bounds = getFootprintBounds(footprint.pads)
+  const bounds = getShapeListBounds(getCopperShapes(footprint))
   const center = getBoundsCenter(bounds)
   return translateFootprint(footprint, -center.x, -center.y)
 }
 
 const getCopperShapes = (footprint: FootprintPreview): ShapeGeometry[] =>
-  footprint.pads.map((pad) => getPcbPadGeometry(pad).copper)
+  footprint.pads.map(
+    (pad) => getTransformedPcbPadGeometry(pad, footprint).copper,
+  )
 
 const getHoleShapes = (footprint: FootprintPreview): ShapeGeometry[] => [
   ...footprint.pads.flatMap((pad) => {
-    const drill = getPcbPadGeometry(pad).drill
+    const drill = getTransformedPcbPadGeometry(pad, footprint).drill
     return drill ? [drill] : []
   }),
-  ...footprint.holes.map(getPcbHoleGeometry),
+  ...footprint.holes.map((hole) =>
+    getTransformedPcbHoleGeometry(hole, footprint),
+  ),
 ]
 
 const pointInShape = (x: number, y: number, shape: ShapeGeometry) => {

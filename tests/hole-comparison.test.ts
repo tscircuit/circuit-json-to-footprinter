@@ -14,7 +14,10 @@ import {
   footprinterStringToPreview,
   summarizeCopperComparison,
 } from "../lib/index.js"
-import { getPcbPadGeometry } from "../lib/preview-geometry.js"
+import {
+  getPcbPadGeometry,
+  getTransformedPcbHoleGeometry,
+} from "../lib/preview-geometry.js"
 
 test("compares drill geometry independently from outer copper", () => {
   const smallerHole = footprinterStringToPreview(
@@ -252,14 +255,17 @@ test("rotates non-plated holes using their Circuit JSON shape types", () => {
     },
     90,
   )
+  const rect = getTransformedPcbHoleGeometry(preview.holes[0], preview)
+  const pill = getTransformedPcbHoleGeometry(preview.holes[1], preview)
 
-  expect(preview.holes[0]).toMatchObject({
-    hole_height: 2,
-    hole_shape: "rect",
-    hole_width: 1,
+  expect(rect).toMatchObject({
+    height: 1,
+    rotation: 90,
+    shape: "rect",
+    width: 2,
   })
-  expect(preview.holes[1]).toMatchObject({
-    ccw_rotation: 90,
-    hole_shape: "rotated_pill",
+  expect(pill).toMatchObject({
+    rotation: 90,
+    shape: "pill",
   })
 })

@@ -365,6 +365,51 @@ export const getPcbHoleGeometry = (hole: PcbHole): ShapeGeometry => {
   }
 }
 
+export interface GeometryTransform {
+  rotation?: number
+  x?: number
+  y?: number
+}
+
+export const transformShapeGeometry = (
+  shape: ShapeGeometry,
+  transform: GeometryTransform,
+): ShapeGeometry => {
+  const rotation = transform.rotation ?? 0
+  const center = rotatePoint(shape.x, shape.y, toRadians(rotation))
+
+  return {
+    cornerRadius: shape.cornerRadius,
+    height: shape.height,
+    points: shape.points,
+    rotation: (shape.rotation + rotation) % 360,
+    shape: shape.shape,
+    width: shape.width,
+    x: center.x + (transform.x ?? 0),
+    y: center.y + (transform.y ?? 0),
+  }
+}
+
+export const getTransformedPcbPadGeometry = (
+  pad: PcbPad,
+  transform: GeometryTransform,
+): PcbPadGeometry => {
+  const geometry = getPcbPadGeometry(pad)
+
+  return {
+    copper: transformShapeGeometry(geometry.copper, transform),
+    drill: geometry.drill
+      ? transformShapeGeometry(geometry.drill, transform)
+      : undefined,
+    element: pad,
+  }
+}
+
+export const getTransformedPcbHoleGeometry = (
+  hole: PcbHole,
+  transform: GeometryTransform,
+): ShapeGeometry => transformShapeGeometry(getPcbHoleGeometry(hole), transform)
+
 export const getPolygonWorldPoints = (shape: ShapeGeometry): Point[] => {
   if (shape.shape !== "polygon" || !shape.points) {
     throw new Error("Polygon PCB shapes require points")

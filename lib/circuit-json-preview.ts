@@ -10,9 +10,12 @@ import { validatePcbPad } from "./preview-geometry.js"
 export interface FootprintPreview {
   holes: PcbHole[]
   pads: Array<PcbSmtPad | PcbPlatedHole>
+  rotation?: number
   sourceHints?: string[]
   subtitle: string
   title: string
+  x?: number
+  y?: number
 }
 
 export interface CircuitJsonPreviewOptions {
@@ -47,9 +50,12 @@ export const circuitJsonToPreview = (
   return {
     holes,
     pads,
+    rotation: 0,
     sourceHints: options.sourceHints,
     subtitle: options.subtitle ?? "Circuit JSON footprint",
     title: options.title ?? "Circuit JSON",
+    x: 0,
+    y: 0,
   }
 }
 
