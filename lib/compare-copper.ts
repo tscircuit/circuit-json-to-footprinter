@@ -7,8 +7,8 @@ import {
   getPcbHoleGeometry,
   getPcbPadGeometry,
   getShapeListBounds,
-  type PcbShape,
   rotatePoint,
+  type ShapeGeometry,
   toRadians,
 } from "./preview-geometry.js"
 
@@ -100,18 +100,18 @@ const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
   return translateFootprint(footprint, -center.x, -center.y)
 }
 
-const getCopperShapes = (footprint: FootprintPreview): PcbShape[] =>
-  footprint.pads.map(getPcbPadGeometry)
+const getCopperShapes = (footprint: FootprintPreview): ShapeGeometry[] =>
+  footprint.pads.map((pad) => getPcbPadGeometry(pad).copper)
 
-const getHoleShapes = (footprint: FootprintPreview): PcbShape[] => [
+const getHoleShapes = (footprint: FootprintPreview): ShapeGeometry[] => [
   ...footprint.pads.flatMap((pad) => {
-    const hole = getPcbPadGeometry(pad).hole
-    return hole ? [hole] : []
+    const drill = getPcbPadGeometry(pad).drill
+    return drill ? [drill] : []
   }),
   ...footprint.holes.map(getPcbHoleGeometry),
 ]
 
-const pointInShape = (x: number, y: number, shape: PcbShape) => {
+const pointInShape = (x: number, y: number, shape: ShapeGeometry) => {
   const dx = x - shape.x
   const dy = y - shape.y
   const local = rotatePoint(dx, dy, -toRadians(shape.rotation))
@@ -206,8 +206,8 @@ const mergeBounds = (left: Bounds, right: Bounds): Bounds => {
 }
 
 const getComparisonBounds = (
-  left: readonly PcbShape[],
-  right: readonly PcbShape[],
+  left: readonly ShapeGeometry[],
+  right: readonly ShapeGeometry[],
 ) => {
   if (!left.length) return addPadding(getShapeListBounds(right))
   if (!right.length) return addPadding(getShapeListBounds(left))
@@ -217,8 +217,8 @@ const getComparisonBounds = (
 }
 
 const rasterizeShapes = (
-  left: readonly PcbShape[],
-  right: readonly PcbShape[],
+  left: readonly ShapeGeometry[],
+  right: readonly ShapeGeometry[],
   gridSize: number,
   includeOccupancy: boolean,
 ): RasterizedShapes => {

@@ -13,6 +13,7 @@ import {
   getShapeListBounds,
   type PcbPadGeometry,
   rotatePoint,
+  type ShapeGeometry,
 } from "./preview-geometry.js"
 
 const SEARCH_GRID_SIZE = 112
@@ -141,12 +142,15 @@ const median = (values: number[]) => {
     : sorted[middle]
 }
 
-const getPadBounds = (pad: PcbPadGeometry): Bounds => getShapeListBounds([pad])
+const getPadBounds = (pad: ShapeGeometry): Bounds => getShapeListBounds([pad])
 
-const getBounds = (pads: PcbPadGeometry[]): Bounds => getShapeListBounds(pads)
+const getBounds = (pads: ShapeGeometry[]): Bounds => getShapeListBounds(pads)
 
 const getPadGeometries = (preview: FootprintPreview) =>
   preview.pads.map(getPcbPadGeometry)
+
+const getCopperShapes = (preview: FootprintPreview) =>
+  getPadGeometries(preview).map(({ copper }) => copper)
 
 const clusterCoordinates = (values: number[], tolerance: number) => {
   const sorted = [...values].sort((left, right) => left - right)
@@ -164,7 +168,7 @@ const clusterCoordinates = (values: number[], tolerance: number) => {
   return clusters.map(median)
 }
 
-const getPitchEstimate = (pads: PcbPadGeometry[], tolerance: number) => {
+const getPitchEstimate = (pads: ShapeGeometry[], tolerance: number) => {
   const medianPadArea = median(pads.map((pad) => pad.width * pad.height))
   const regularPads = pads.filter(
     (pad) => pad.width * pad.height <= medianPadArea * 2.5,
@@ -206,7 +210,7 @@ const getPitchEstimate = (pads: PcbPadGeometry[], tolerance: number) => {
 }
 
 const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
-  const pads = getPadGeometries(target)
+  const pads = getCopperShapes(target)
   const bounds = getBounds(pads)
   const padBounds = pads.map(getPadBounds)
   const medianPadWidth = median(padBounds.map((bound) => bound.width))
@@ -342,11 +346,11 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     padBounds.map((bound) => Math.sqrt(bound.width * bound.height)),
   )
   const medianHoleDiameter = median(
-    pads.flatMap((pad) =>
-      pad.hole ? [Math.sqrt(pad.hole.width * pad.hole.height)] : [],
+    getPadGeometries(target).flatMap((pad) =>
+      pad.drill ? [Math.sqrt(pad.drill.width * pad.drill.height)] : [],
     ),
   )
-  const platedHoleCount = pads.filter(
+  const platedHoleCount = target.pads.filter(
     (pad) => pad.type === "pcb_plated_hole",
   ).length
   const insetQuadAdjustment = topology === "four-sided" ? 0.2 : 0
@@ -388,20 +392,23 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
 }
 
 const normalizePads = (pads: PcbPadGeometry[]) => {
-  const bounds = getBounds(pads)
+  const bounds = getBounds(pads.map(({ copper }) => copper))
   const centerX = (bounds.minX + bounds.maxX) / 2
   const centerY = (bounds.minY + bounds.maxY) / 2
   return pads.map((pad) => ({
     ...pad,
-    hole: pad.hole
+    copper: {
+      ...pad.copper,
+      x: pad.copper.x - centerX,
+      y: pad.copper.y - centerY,
+    },
+    drill: pad.drill
       ? {
-          ...pad.hole,
-          x: pad.hole.x - centerX,
-          y: pad.hole.y - centerY,
+          ...pad.drill,
+          x: pad.drill.x - centerX,
+          y: pad.drill.y - centerY,
         }
       : undefined,
-    x: pad.x - centerX,
-    y: pad.y - centerY,
   }))
 }
 
@@ -428,14 +435,14 @@ const rotateSmtPad = (
       return {
         ...pad,
         ...position,
-        ccw_rotation: (getPcbPadGeometry(pad).rotation + rotation) % 360,
+        ccw_rotation: rotation,
         shape: "rotated_rect",
       }
     case "pill":
       return {
         ...pad,
         ...position,
-        ccw_rotation: (getPcbPadGeometry(pad).rotation + rotation) % 360,
+        ccw_rotation: rotation,
         shape: "rotated_pill",
       }
     case "rotated_rect":
@@ -579,7 +586,7 @@ const rotateFootprint = (
 }
 
 const getOrientedPadSize = (pad: PcbPadGeometry) => {
-  const bounds = getPadBounds({ ...pad, x: 0, y: 0 })
+  const bounds = getShapeListBounds([{ ...pad.copper, x: 0, y: 0 }])
   return { height: bounds.height, width: bounds.width }
 }
 
@@ -594,8 +601,8 @@ const matchPadsByPosition = (
     for (const rightIndex of availableRight) {
       const rightPad = right[rightIndex]
       const distance = Math.hypot(
-        leftPad.x - rightPad.x,
-        leftPad.y - rightPad.y,
+        leftPad.copper.x - rightPad.copper.x,
+        leftPad.copper.y - rightPad.copper.y,
       )
       if (distance < bestDistance) {
         bestDistance = distance
@@ -607,6 +614,15 @@ const matchPadsByPosition = (
   })
 }
 
+const normalizePortHint = (hint: string) => {
+  const trimmed = hint.trim()
+  const numericPin = trimmed.match(/^(?:pin)?(\d+)$/i)
+  return numericPin ? `pin${numericPin[1]}` : trimmed
+}
+
+const getPortHints = ({ element }: PcbPadGeometry) =>
+  (element.port_hints ?? []).map(normalizePortHint)
+
 const getGeometryLoss = (
   candidate: FootprintPreview,
   target: FootprintPreview,
@@ -615,7 +631,7 @@ const getGeometryLoss = (
 
   const candidatePads = normalizePads(getPadGeometries(candidate))
   const targetPads = normalizePads(getPadGeometries(target))
-  const targetBounds = getBounds(targetPads)
+  const targetBounds = getBounds(targetPads.map(({ copper }) => copper))
   const positionScale = Math.max(
     Math.hypot(targetBounds.width, targetBounds.height),
     0.1,
@@ -626,8 +642,8 @@ const getGeometryLoss = (
   for (const [candidatePad, targetPad] of pairs) {
     const candidateSize = getOrientedPadSize(candidatePad)
     const targetSize = getOrientedPadSize(targetPad)
-    const dx = (candidatePad.x - targetPad.x) / positionScale
-    const dy = (candidatePad.y - targetPad.y) / positionScale
+    const dx = (candidatePad.copper.x - targetPad.copper.x) / positionScale
+    const dy = (candidatePad.copper.y - targetPad.copper.y) / positionScale
     const dw =
       (candidateSize.width - targetSize.width) /
       Math.max(targetSize.width, 0.05)
@@ -636,26 +652,26 @@ const getGeometryLoss = (
       Math.max(targetSize.height, 0.05)
 
     loss += dx * dx * 4 + dy * dy * 4 + dw * dw + dh * dh
-    if (candidatePad.type !== targetPad.type) loss += 4
-    if (candidatePad.shape !== targetPad.shape) loss += 0.08
-    if (Boolean(candidatePad.hole) !== Boolean(targetPad.hole)) {
+    if (candidatePad.element.type !== targetPad.element.type) loss += 4
+    if (candidatePad.copper.shape !== targetPad.copper.shape) loss += 0.08
+    if (Boolean(candidatePad.drill) !== Boolean(targetPad.drill)) {
       loss += 4
-    } else if (candidatePad.hole && targetPad.hole) {
-      const holeWidthScale = Math.max(targetPad.hole.width, 0.05)
-      const holeHeightScale = Math.max(targetPad.hole.height, 0.05)
+    } else if (candidatePad.drill && targetPad.drill) {
+      const holeWidthScale = Math.max(targetPad.drill.width, 0.05)
+      const holeHeightScale = Math.max(targetPad.drill.height, 0.05)
       const holeWidthDifference =
-        (candidatePad.hole.width - targetPad.hole.width) / holeWidthScale
+        (candidatePad.drill.width - targetPad.drill.width) / holeWidthScale
       const holeHeightDifference =
-        (candidatePad.hole.height - targetPad.hole.height) / holeHeightScale
+        (candidatePad.drill.height - targetPad.drill.height) / holeHeightScale
       const holeOffsetXDifference =
-        (candidatePad.hole.x -
-          candidatePad.x -
-          (targetPad.hole.x - targetPad.x)) /
+        (candidatePad.drill.x -
+          candidatePad.copper.x -
+          (targetPad.drill.x - targetPad.copper.x)) /
         positionScale
       const holeOffsetYDifference =
-        (candidatePad.hole.y -
-          candidatePad.y -
-          (targetPad.hole.y - targetPad.y)) /
+        (candidatePad.drill.y -
+          candidatePad.copper.y -
+          (targetPad.drill.y - targetPad.copper.y)) /
         positionScale
 
       loss +=
@@ -663,11 +679,12 @@ const getGeometryLoss = (
         holeHeightDifference * holeHeightDifference +
         holeOffsetXDifference * holeOffsetXDifference * 4 +
         holeOffsetYDifference * holeOffsetYDifference * 4
-      if (candidatePad.hole.shape !== targetPad.hole.shape) loss += 0.08
+      if (candidatePad.drill.shape !== targetPad.drill.shape) loss += 0.08
     }
+    const targetPortHints = getPortHints(targetPad)
     if (
-      targetPad.portHints.length > 0 &&
-      !candidatePad.portHints.some((hint) => targetPad.portHints.includes(hint))
+      targetPortHints.length > 0 &&
+      !getPortHints(candidatePad).some((hint) => targetPortHints.includes(hint))
     ) {
       loss += 0.04
     }
@@ -741,29 +758,29 @@ const buildParameterizedString = (
 
 const geometrySignature = (preview: FootprintPreview) => {
   const padSignature = getPadGeometries(preview)
-    .map((pad) => {
-      const holeSignature = pad.hole
+    .map(({ copper, drill, element }) => {
+      const holeSignature = drill
         ? [
-            pad.hole.shape,
-            pad.hole.x - pad.x,
-            pad.hole.y - pad.y,
-            pad.hole.width,
-            pad.hole.height,
-            pad.hole.rotation,
+            drill.shape,
+            drill.x - copper.x,
+            drill.y - copper.y,
+            drill.width,
+            drill.height,
+            drill.rotation,
           ].join(":")
         : "no-hole"
       const pointSignature =
-        pad.shape === "polygon"
-          ? pad.points?.map((point) => `${point.x}:${point.y}`).join(",")
+        copper.shape === "polygon"
+          ? copper.points?.map((point) => `${point.x}:${point.y}`).join(",")
           : "no-points"
       return [
-        pad.type,
-        pad.shape,
-        pad.x,
-        pad.y,
-        pad.width,
-        pad.height,
-        pad.rotation,
+        element.type,
+        copper.shape,
+        copper.x,
+        copper.y,
+        copper.width,
+        copper.height,
+        copper.rotation,
         pointSignature,
         holeSignature,
       ]
@@ -784,7 +801,7 @@ const geometrySignature = (preview: FootprintPreview) => {
 
 const padShapeSignature = (preview: FootprintPreview) =>
   getPadGeometries(preview)
-    .map((pad) => `${pad.type}:${pad.shape}`)
+    .map(({ copper, element }) => `${element.type}:${copper.shape}`)
     .toSorted()
     .join("|")
 
@@ -797,10 +814,14 @@ const areSamePoint = (
 ) => areClose(left.x, right.x) && areClose(left.y, right.y)
 
 const haveSamePolygon = (left: PcbPadGeometry, right: PcbPadGeometry) => {
-  if (left.shape !== "polygon" && right.shape !== "polygon") return true
-  if (left.shape !== "polygon" || right.shape !== "polygon") return false
-  const leftPoints = getPolygonWorldPoints(left)
-  const rightPoints = getPolygonWorldPoints(right)
+  if (left.copper.shape !== "polygon" && right.copper.shape !== "polygon") {
+    return true
+  }
+  if (left.copper.shape !== "polygon" || right.copper.shape !== "polygon") {
+    return false
+  }
+  const leftPoints = getPolygonWorldPoints(left.copper)
+  const rightPoints = getPolygonWorldPoints(right.copper)
   if (leftPoints.length !== rightPoints.length) return false
 
   const matchesFrom = (startIndex: number, direction: 1 | -1) =>
@@ -837,27 +858,27 @@ const haveSameOrientedPads = (
     const leftSize = getOrientedPadSize(leftPad)
     const rightSize = getOrientedPadSize(rightPad)
     const holesMatch =
-      !leftPad.hole && !rightPad.hole
+      !leftPad.drill && !rightPad.drill
         ? true
-        : Boolean(leftPad.hole && rightPad.hole) &&
-          leftPad.hole?.shape === rightPad.hole?.shape &&
+        : Boolean(leftPad.drill && rightPad.drill) &&
+          leftPad.drill?.shape === rightPad.drill?.shape &&
           areClose(
-            (leftPad.hole?.x ?? leftPad.x) - leftPad.x,
-            (rightPad.hole?.x ?? rightPad.x) - rightPad.x,
+            (leftPad.drill?.x ?? leftPad.copper.x) - leftPad.copper.x,
+            (rightPad.drill?.x ?? rightPad.copper.x) - rightPad.copper.x,
           ) &&
           areClose(
-            (leftPad.hole?.y ?? leftPad.y) - leftPad.y,
-            (rightPad.hole?.y ?? rightPad.y) - rightPad.y,
+            (leftPad.drill?.y ?? leftPad.copper.y) - leftPad.copper.y,
+            (rightPad.drill?.y ?? rightPad.copper.y) - rightPad.copper.y,
           ) &&
-          areClose(leftPad.hole?.width ?? 0, rightPad.hole?.width ?? 0) &&
-          areClose(leftPad.hole?.height ?? 0, rightPad.hole?.height ?? 0) &&
-          areClose(leftPad.hole?.rotation ?? 0, rightPad.hole?.rotation ?? 0)
+          areClose(leftPad.drill?.width ?? 0, rightPad.drill?.width ?? 0) &&
+          areClose(leftPad.drill?.height ?? 0, rightPad.drill?.height ?? 0) &&
+          areClose(leftPad.drill?.rotation ?? 0, rightPad.drill?.rotation ?? 0)
     return (
-      leftPad.type === rightPad.type &&
-      leftPad.shape === rightPad.shape &&
-      leftPad.portHints.join("|") === rightPad.portHints.join("|") &&
-      areClose(leftPad.x, rightPad.x) &&
-      areClose(leftPad.y, rightPad.y) &&
+      leftPad.element.type === rightPad.element.type &&
+      leftPad.copper.shape === rightPad.copper.shape &&
+      getPortHints(leftPad).join("|") === getPortHints(rightPad).join("|") &&
+      areClose(leftPad.copper.x, rightPad.copper.x) &&
+      areClose(leftPad.copper.y, rightPad.copper.y) &&
       areClose(leftSize.width, rightSize.width) &&
       areClose(leftSize.height, rightSize.height) &&
       haveSamePolygon(leftPad, rightPad) &&
@@ -1009,7 +1030,7 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
   }
 
   if (padCount === 2 && analysis.platedHoleCount === 0) {
-    const padBounds = getPadGeometries(target).map(getPadBounds)
+    const padBounds = getCopperShapes(target).map(getPadBounds)
     const passiveDimensions = `p${formatMillimeters(
       analysis.heuristics.p,
     )}_pw${formatMillimeters(
@@ -1024,13 +1045,13 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     }
   }
 
-  if (getPadGeometries(target).some((pad) => pad.shape === "pill")) {
+  if (getCopperShapes(target).some((pad) => pad.shape === "pill")) {
     for (const seed of [...seeds]) {
       const pillPadSeed = `${seed}_pillpads`
       const preview = tryBuild(pillPadSeed)
       if (
         preview?.pads.length === padCount &&
-        getPadGeometries(preview).some((pad) => pad.shape === "pill")
+        getCopperShapes(preview).some((pad) => pad.shape === "pill")
       ) {
         seeds.add(pillPadSeed)
       }
@@ -1064,7 +1085,7 @@ const selectSeedsToOptimize = (
     }
   }
 
-  if (getPadGeometries(target).some((pad) => pad.shape === "pill")) {
+  if (getCopperShapes(target).some((pad) => pad.shape === "pill")) {
     for (const candidate of candidates) {
       if (padShapeSignature(candidate.preview) !== targetPadShapeSignature) {
         continue

@@ -5,7 +5,7 @@ import type {
   PcbPlatedHole,
   PcbSmtPad,
 } from "circuit-json"
-import { getPcbPadGeometry } from "./preview-geometry.js"
+import { validatePcbPad } from "./preview-geometry.js"
 
 export interface FootprintPreview {
   holes: PcbHole[]
@@ -42,8 +42,7 @@ export const circuitJsonToPreview = (
     )
   }
 
-  // Geometry conversion also validates polygon pads before discovery starts.
-  pads.forEach(getPcbPadGeometry)
+  pads.forEach(validatePcbPad)
 
   return {
     holes,

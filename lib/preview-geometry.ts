@@ -5,23 +5,34 @@ import {
 } from "@tscircuit/math-utils"
 import type { PcbHole, PcbPlatedHole, PcbSmtPad, Point } from "circuit-json"
 
-type PcbShapeKind = "circle" | "ellipse" | "pill" | "polygon" | "rect"
+type ShapeKind = "circle" | "ellipse" | "pill" | "polygon" | "rect"
 
-export interface PcbShape {
+const HOLE_SHAPE_KIND = {
+  circle: "circle",
+  oval: "ellipse",
+  pill: "pill",
+  rect: "rect",
+  rotated_pill: "pill",
+  square: "rect",
+} as const satisfies Record<PcbHole["hole_shape"], ShapeKind>
+
+export interface ShapeGeometry {
   cornerRadius?: number
   height: number
   points?: Point[]
   rotation: number
-  shape: PcbShapeKind
+  shape: ShapeKind
   width: number
   x: number
   y: number
 }
 
-export interface PcbPadGeometry extends PcbShape {
-  hole?: PcbShape
-  portHints: string[]
-  type: PcbSmtPad["type"] | PcbPlatedHole["type"]
+export type PcbPad = PcbSmtPad | PcbPlatedHole
+
+export interface PcbPadGeometry {
+  copper: ShapeGeometry
+  drill?: ShapeGeometry
+  element: PcbPad
 }
 
 export interface Bounds extends MathBounds {
@@ -75,27 +86,32 @@ const validatePolygon = (points: readonly Point[], elementName: string) => {
   }
 }
 
-const normalizePortHint = (hint: string) => {
-  const trimmed = hint.trim()
-  const pinMatch = trimmed.match(/^pin(\d+)$/i)
-  if (pinMatch) return `pin${pinMatch[1]}`
-  const numericMatch = trimmed.match(/^(\d+)$/)
-  return numericMatch ? `pin${numericMatch[1]}` : trimmed
-}
-
-const getPortHints = (pad: PcbSmtPad | PcbPlatedHole) =>
-  (pad.port_hints ?? []).map(normalizePortHint)
-
-const getLegacySmtPadRotation = (pad: PcbSmtPad) => {
-  if (
-    "ccw_rotation" in pad &&
-    typeof pad.ccw_rotation === "number" &&
-    Number.isFinite(pad.ccw_rotation)
-  ) {
-    return pad.ccw_rotation
+export const validatePcbPad = (pad: PcbPad) => {
+  if (pad.type === "pcb_smtpad" && pad.shape === "polygon") {
+    validatePolygon(pad.points, "Polygon PCB SMT pads")
   }
-  return 0
+  if (pad.type === "pcb_plated_hole" && pad.shape === "hole_with_polygon_pad") {
+    validatePolygon(pad.pad_outline, "Polygon plated-hole pads")
+  }
 }
+
+// Compatibility is isolated here so the rest of the converter only handles
+// the current Circuit JSON representation.
+const getLegacyCornerRadius = (pad: object) =>
+  "cornerRadius" in pad &&
+  typeof pad.cornerRadius === "number" &&
+  Number.isFinite(pad.cornerRadius)
+    ? pad.cornerRadius
+    : undefined
+
+// @tscircuit/footprinter 0.0.385 emits ccw_rotation on rect and pill pads
+// instead of using the rotated_rect and rotated_pill discriminants.
+const getLegacySmtPadRotation = (pad: PcbSmtPad) =>
+  "ccw_rotation" in pad &&
+  typeof pad.ccw_rotation === "number" &&
+  Number.isFinite(pad.ccw_rotation)
+    ? pad.ccw_rotation
+    : 0
 
 const getCornerRadius = (
   pad:
@@ -112,8 +128,10 @@ const getCornerRadius = (
 ) => {
   const radius =
     "corner_radius" in pad
-      ? (pad.corner_radius ?? pad.rect_border_radius)
-      : pad.rect_border_radius
+      ? (pad.corner_radius ??
+        pad.rect_border_radius ??
+        getLegacyCornerRadius(pad))
+      : (pad.rect_border_radius ?? getLegacyCornerRadius(pad))
   if (!radius || radius <= 0) return undefined
   const width = "width" in pad ? pad.width : pad.rect_pad_width
   const height = "height" in pad ? pad.height : pad.rect_pad_height
@@ -123,7 +141,7 @@ const getCornerRadius = (
 const getPolygonGeometry = (
   absolutePoints: readonly Point[],
   elementName: string,
-): PcbShape => {
+): ShapeGeometry => {
   validatePolygon(absolutePoints, elementName)
   const bounds = getBoundsFromPoints([...absolutePoints])
   if (!bounds) {
@@ -145,16 +163,10 @@ const getPolygonGeometry = (
   }
 }
 
-const getSmtPadGeometry = (pad: PcbSmtPad): PcbPadGeometry => {
-  const metadata = {
-    portHints: getPortHints(pad),
-    type: pad.type,
-  } as const
-
+const getSmtPadCopperShape = (pad: PcbSmtPad): ShapeGeometry => {
   switch (pad.shape) {
     case "circle":
       return {
-        ...metadata,
         height: pad.radius * 2,
         rotation: 0,
         shape: "circle",
@@ -163,58 +175,38 @@ const getSmtPadGeometry = (pad: PcbSmtPad): PcbPadGeometry => {
         y: pad.y,
       }
     case "rect":
-      return {
-        ...metadata,
-        cornerRadius: getCornerRadius(pad),
-        height: pad.height,
-        // Older footprinter output attached ccw_rotation to "rect" before
-        // circuit-json introduced the "rotated_rect" discriminant.
-        rotation: getLegacySmtPadRotation(pad),
-        shape: "rect",
-        width: pad.width,
-        x: pad.x,
-        y: pad.y,
-      }
     case "rotated_rect":
       return {
-        ...metadata,
         cornerRadius: getCornerRadius(pad),
         height: pad.height,
-        rotation: pad.ccw_rotation,
+        rotation:
+          pad.shape === "rotated_rect"
+            ? pad.ccw_rotation
+            : getLegacySmtPadRotation(pad),
         shape: "rect",
         width: pad.width,
         x: pad.x,
         y: pad.y,
       }
     case "pill":
-      return {
-        ...metadata,
-        height: pad.height,
-        rotation: getLegacySmtPadRotation(pad),
-        shape: "pill",
-        width: pad.width,
-        x: pad.x,
-        y: pad.y,
-      }
     case "rotated_pill":
       return {
-        ...metadata,
         height: pad.height,
-        rotation: pad.ccw_rotation,
+        rotation:
+          pad.shape === "rotated_pill"
+            ? pad.ccw_rotation
+            : getLegacySmtPadRotation(pad),
         shape: "pill",
         width: pad.width,
         x: pad.x,
         y: pad.y,
       }
     case "polygon":
-      return {
-        ...metadata,
-        ...getPolygonGeometry(pad.points, "Polygon PCB SMT pads"),
-      }
+      return getPolygonGeometry(pad.points, "Polygon PCB SMT pads")
   }
 }
 
-const getPlatedHoleDrillGeometry = (pad: PcbPlatedHole): PcbShape => {
+const getPlatedHoleDrillGeometry = (pad: PcbPlatedHole): ShapeGeometry => {
   switch (pad.shape) {
     case "circle":
       return {
@@ -268,12 +260,7 @@ const getPlatedHoleDrillGeometry = (pad: PcbPlatedHole): PcbShape => {
         height: pad.hole_height ?? diameter,
         rotation:
           pad.hole_shape === "rotated_pill" ? (pad.ccw_rotation ?? 0) : 0,
-        shape:
-          pad.hole_shape === "circle"
-            ? "circle"
-            : pad.hole_shape === "oval"
-              ? "ellipse"
-              : "pill",
+        shape: HOLE_SHAPE_KIND[pad.hole_shape],
         width: pad.hole_width ?? diameter,
         x: pad.x + pad.hole_offset_x,
         y: pad.y + pad.hole_offset_y,
@@ -282,17 +269,10 @@ const getPlatedHoleDrillGeometry = (pad: PcbPlatedHole): PcbShape => {
   }
 }
 
-const getPlatedHolePadGeometry = (pad: PcbPlatedHole): PcbPadGeometry => {
-  const metadata = {
-    hole: getPlatedHoleDrillGeometry(pad),
-    portHints: getPortHints(pad),
-    type: pad.type,
-  } as const
-
+const getPlatedHoleCopperShape = (pad: PcbPlatedHole): ShapeGeometry => {
   switch (pad.shape) {
     case "circle":
       return {
-        ...metadata,
         height: pad.outer_diameter,
         rotation: 0,
         shape: "circle",
@@ -303,7 +283,6 @@ const getPlatedHolePadGeometry = (pad: PcbPlatedHole): PcbPadGeometry => {
     case "oval":
     case "pill":
       return {
-        ...metadata,
         height: pad.outer_height,
         rotation: pad.ccw_rotation,
         shape: pad.shape === "oval" ? "ellipse" : "pill",
@@ -315,7 +294,6 @@ const getPlatedHolePadGeometry = (pad: PcbPlatedHole): PcbPadGeometry => {
     case "pill_hole_with_rect_pad":
     case "rotated_pill_hole_with_rect_pad":
       return {
-        ...metadata,
         cornerRadius: getCornerRadius(pad),
         height: pad.rect_pad_height,
         rotation: "rect_ccw_rotation" in pad ? (pad.rect_ccw_rotation ?? 0) : 0,
@@ -325,78 +303,48 @@ const getPlatedHolePadGeometry = (pad: PcbPlatedHole): PcbPadGeometry => {
         y: pad.y,
       }
     case "hole_with_polygon_pad":
-      return {
-        ...metadata,
-        ...getPolygonGeometry(
-          pad.pad_outline.map((point) => ({
-            x: point.x + pad.x,
-            y: point.y + pad.y,
-          })),
-          "Polygon plated-hole pads",
-        ),
-      }
+      return getPolygonGeometry(
+        pad.pad_outline.map((point) => ({
+          x: point.x + pad.x,
+          y: point.y + pad.y,
+        })),
+        "Polygon plated-hole pads",
+      )
   }
 }
 
-export const getPcbPadGeometry = (
-  pad: PcbSmtPad | PcbPlatedHole,
-): PcbPadGeometry =>
-  pad.type === "pcb_smtpad"
-    ? getSmtPadGeometry(pad)
-    : getPlatedHolePadGeometry(pad)
+export const getPcbPadGeometry = (pad: PcbPad): PcbPadGeometry => ({
+  copper:
+    pad.type === "pcb_smtpad"
+      ? getSmtPadCopperShape(pad)
+      : getPlatedHoleCopperShape(pad),
+  drill:
+    pad.type === "pcb_plated_hole"
+      ? getPlatedHoleDrillGeometry(pad)
+      : undefined,
+  element: pad,
+})
 
-export const getPcbHoleGeometry = (hole: PcbHole): PcbShape => {
+export const getPcbHoleGeometry = (hole: PcbHole): ShapeGeometry => {
   switch (hole.hole_shape) {
     case "circle":
-      return {
-        height: hole.hole_diameter,
-        rotation: 0,
-        shape: "circle",
-        width: hole.hole_diameter,
-        x: hole.x,
-        y: hole.y,
-      }
     case "square":
       return {
         height: hole.hole_diameter,
         rotation: 0,
-        shape: "rect",
+        shape: HOLE_SHAPE_KIND[hole.hole_shape],
         width: hole.hole_diameter,
         x: hole.x,
         y: hole.y,
       }
     case "rect":
-      return {
-        height: hole.hole_height,
-        rotation: 0,
-        shape: "rect",
-        width: hole.hole_width,
-        x: hole.x,
-        y: hole.y,
-      }
     case "oval":
-      return {
-        height: hole.hole_height,
-        rotation: 0,
-        shape: "ellipse",
-        width: hole.hole_width,
-        x: hole.x,
-        y: hole.y,
-      }
     case "pill":
-      return {
-        height: hole.hole_height,
-        rotation: 0,
-        shape: "pill",
-        width: hole.hole_width,
-        x: hole.x,
-        y: hole.y,
-      }
     case "rotated_pill":
       return {
         height: hole.hole_height,
-        rotation: hole.ccw_rotation,
-        shape: "pill",
+        rotation: hole.hole_shape === "rotated_pill" ? hole.ccw_rotation : 0,
+        shape: HOLE_SHAPE_KIND[hole.hole_shape],
         width: hole.hole_width,
         x: hole.x,
         y: hole.y,
@@ -404,7 +352,7 @@ export const getPcbHoleGeometry = (hole: PcbHole): PcbShape => {
   }
 }
 
-export const getPolygonWorldPoints = (shape: PcbShape): Point[] => {
+export const getPolygonWorldPoints = (shape: ShapeGeometry): Point[] => {
   if (shape.shape !== "polygon" || !shape.points) {
     throw new Error("Polygon PCB shapes require points")
   }
@@ -415,7 +363,7 @@ export const getPolygonWorldPoints = (shape: PcbShape): Point[] => {
   })
 }
 
-export const getShapeBounds = (shape: PcbShape): Bounds => {
+export const getShapeBounds = (shape: ShapeGeometry): Bounds => {
   if (shape.shape === "polygon") {
     if (!shape.points || shape.points.length < 3) {
       throw new Error("Polygon PCB shapes require at least three points")
@@ -438,7 +386,9 @@ export const getShapeBounds = (shape: PcbShape): Bounds => {
   return getSizedBounds(corners)
 }
 
-export const getShapeListBounds = (shapes: readonly PcbShape[]): Bounds => {
+export const getShapeListBounds = (
+  shapes: readonly ShapeGeometry[],
+): Bounds => {
   if (shapes.length === 0) {
     return {
       height: 1,
@@ -459,6 +409,5 @@ export const getShapeListBounds = (shapes: readonly PcbShape[]): Bounds => {
   )
 }
 
-export const getFootprintBounds = (
-  pads: readonly (PcbSmtPad | PcbPlatedHole)[],
-): Bounds => getShapeListBounds(pads.map(getPcbPadGeometry))
+export const getFootprintBounds = (pads: readonly PcbPad[]): Bounds =>
+  getShapeListBounds(pads.map((pad) => getPcbPadGeometry(pad).copper))
