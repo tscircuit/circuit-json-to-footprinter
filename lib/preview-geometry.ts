@@ -3,7 +3,16 @@ import {
   getBoundsFromPoints,
   type Bounds as MathBounds,
 } from "@tscircuit/math-utils"
-import type { PcbHole, PcbPlatedHole, PcbSmtPad, Point } from "circuit-json"
+import type {
+  PcbHole,
+  PcbPlatedHole,
+  PcbSmtPad,
+  PcbSmtPadPill,
+  PcbSmtPadRect,
+  PcbSmtPadRotatedPill,
+  PcbSmtPadRotatedRect,
+  Point,
+} from "circuit-json"
 
 type ShapeKind = "circle" | "ellipse" | "pill" | "polygon" | "rect"
 
@@ -95,46 +104,14 @@ export const validatePcbPad = (pad: PcbPad) => {
   }
 }
 
-// Compatibility is isolated here so the rest of the converter only handles
-// the current Circuit JSON representation.
-const getLegacyCornerRadius = (pad: object) =>
-  "cornerRadius" in pad &&
-  typeof pad.cornerRadius === "number" &&
-  Number.isFinite(pad.cornerRadius)
-    ? pad.cornerRadius
-    : undefined
-
-// @tscircuit/footprinter 0.0.385 emits ccw_rotation on rect and pill pads
-// instead of using the rotated_rect and rotated_pill discriminants.
-const getLegacySmtPadRotation = (pad: PcbSmtPad) =>
-  "ccw_rotation" in pad &&
-  typeof pad.ccw_rotation === "number" &&
-  Number.isFinite(pad.ccw_rotation)
-    ? pad.ccw_rotation
-    : 0
-
-const getCornerRadius = (
-  pad:
-    | Extract<PcbSmtPad, { shape: "rect" | "rotated_rect" }>
-    | Extract<
-        PcbPlatedHole,
-        {
-          shape:
-            | "circular_hole_with_rect_pad"
-            | "pill_hole_with_rect_pad"
-            | "rotated_pill_hole_with_rect_pad"
-        }
-      >,
+const clampCornerRadius = (
+  radius: number | undefined,
+  width: number,
+  height: number,
 ) => {
-  const radius =
-    "corner_radius" in pad
-      ? (pad.corner_radius ??
-        pad.rect_border_radius ??
-        getLegacyCornerRadius(pad))
-      : (pad.rect_border_radius ?? getLegacyCornerRadius(pad))
-  if (!radius || radius <= 0) return undefined
-  const width = "width" in pad ? pad.width : pad.rect_pad_width
-  const height = "height" in pad ? pad.height : pad.rect_pad_height
+  if (radius === undefined || !Number.isFinite(radius) || radius <= 0) {
+    return undefined
+  }
   return Math.min(radius, width / 2, height / 2)
 }
 
@@ -163,6 +140,33 @@ const getPolygonGeometry = (
   }
 }
 
+const getSmtRectCopperShape = (
+  pad: PcbSmtPadRect | PcbSmtPadRotatedRect,
+): ShapeGeometry => ({
+  cornerRadius: clampCornerRadius(
+    pad.corner_radius ?? pad.rect_border_radius,
+    pad.width,
+    pad.height,
+  ),
+  height: pad.height,
+  rotation: pad.shape === "rotated_rect" ? pad.ccw_rotation : 0,
+  shape: "rect",
+  width: pad.width,
+  x: pad.x,
+  y: pad.y,
+})
+
+const getSmtPillCopperShape = (
+  pad: PcbSmtPadPill | PcbSmtPadRotatedPill,
+): ShapeGeometry => ({
+  height: pad.height,
+  rotation: pad.shape === "rotated_pill" ? pad.ccw_rotation : 0,
+  shape: "pill",
+  width: pad.width,
+  x: pad.x,
+  y: pad.y,
+})
+
 const getSmtPadCopperShape = (pad: PcbSmtPad): ShapeGeometry => {
   switch (pad.shape) {
     case "circle":
@@ -176,31 +180,10 @@ const getSmtPadCopperShape = (pad: PcbSmtPad): ShapeGeometry => {
       }
     case "rect":
     case "rotated_rect":
-      return {
-        cornerRadius: getCornerRadius(pad),
-        height: pad.height,
-        rotation:
-          pad.shape === "rotated_rect"
-            ? pad.ccw_rotation
-            : getLegacySmtPadRotation(pad),
-        shape: "rect",
-        width: pad.width,
-        x: pad.x,
-        y: pad.y,
-      }
+      return getSmtRectCopperShape(pad)
     case "pill":
     case "rotated_pill":
-      return {
-        height: pad.height,
-        rotation:
-          pad.shape === "rotated_pill"
-            ? pad.ccw_rotation
-            : getLegacySmtPadRotation(pad),
-        shape: "pill",
-        width: pad.width,
-        x: pad.x,
-        y: pad.y,
-      }
+      return getSmtPillCopperShape(pad)
     case "polygon":
       return getPolygonGeometry(pad.points, "Polygon PCB SMT pads")
   }
@@ -291,12 +274,42 @@ const getPlatedHoleCopperShape = (pad: PcbPlatedHole): ShapeGeometry => {
         y: pad.y,
       }
     case "circular_hole_with_rect_pad":
+      return {
+        cornerRadius: clampCornerRadius(
+          pad.rect_border_radius,
+          pad.rect_pad_width,
+          pad.rect_pad_height,
+        ),
+        height: pad.rect_pad_height,
+        rotation: pad.rect_ccw_rotation ?? 0,
+        shape: "rect",
+        width: pad.rect_pad_width,
+        x: pad.x,
+        y: pad.y,
+      }
     case "pill_hole_with_rect_pad":
+      return {
+        cornerRadius: clampCornerRadius(
+          pad.rect_border_radius,
+          pad.rect_pad_width,
+          pad.rect_pad_height,
+        ),
+        height: pad.rect_pad_height,
+        rotation: 0,
+        shape: "rect",
+        width: pad.rect_pad_width,
+        x: pad.x,
+        y: pad.y,
+      }
     case "rotated_pill_hole_with_rect_pad":
       return {
-        cornerRadius: getCornerRadius(pad),
+        cornerRadius: clampCornerRadius(
+          pad.rect_border_radius,
+          pad.rect_pad_width,
+          pad.rect_pad_height,
+        ),
         height: pad.rect_pad_height,
-        rotation: "rect_ccw_rotation" in pad ? (pad.rect_ccw_rotation ?? 0) : 0,
+        rotation: pad.rect_ccw_rotation,
         shape: "rect",
         width: pad.rect_pad_width,
         x: pad.x,

@@ -9,7 +9,6 @@ import {
   type Bounds,
   getPcbHoleGeometry,
   getPcbPadGeometry,
-  getPolygonWorldPoints,
   getShapeListBounds,
   type PcbPadGeometry,
   rotatePoint,
@@ -543,33 +542,85 @@ const rotatePlatedHole = (
 
 const rotateHole = (hole: PcbHole, rotation: FootprintRotation): PcbHole => {
   if (rotation === 0) return hole
-  const position = rotateCoordinates(hole, rotation)
+  const { x, y } = rotateCoordinates(hole, rotation)
 
   switch (hole.hole_shape) {
     case "circle":
+      return {
+        hole_diameter: hole.hole_diameter,
+        hole_shape: "circle",
+        pcb_hole_id: hole.pcb_hole_id,
+        type: "pcb_hole",
+        x,
+        y,
+      }
     case "square":
-      return { ...hole, ...position }
+      return {
+        hole_diameter: hole.hole_diameter,
+        hole_shape: "square",
+        pcb_hole_id: hole.pcb_hole_id,
+        type: "pcb_hole",
+        x,
+        y,
+      }
     case "rect":
+      return {
+        hole_height:
+          rotation === 90 || rotation === 270
+            ? hole.hole_width
+            : hole.hole_height,
+        hole_shape: "rect",
+        hole_width:
+          rotation === 90 || rotation === 270
+            ? hole.hole_height
+            : hole.hole_width,
+        pcb_hole_id: hole.pcb_hole_id,
+        type: "pcb_hole",
+        x,
+        y,
+      }
     case "oval":
+      return {
+        hole_height:
+          rotation === 90 || rotation === 270
+            ? hole.hole_width
+            : hole.hole_height,
+        hole_shape: "oval",
+        hole_width:
+          rotation === 90 || rotation === 270
+            ? hole.hole_height
+            : hole.hole_width,
+        pcb_hole_id: hole.pcb_hole_id,
+        type: "pcb_hole",
+        x,
+        y,
+      }
     case "pill":
-      return rotation === 90 || rotation === 270
-        ? {
-            ...hole,
-            ...position,
-            hole_height: hole.hole_width,
-            hole_width: hole.hole_height,
-          }
-        : { ...hole, ...position }
+      return {
+        ccw_rotation: rotation,
+        hole_height: hole.hole_height,
+        hole_shape: "rotated_pill",
+        hole_width: hole.hole_width,
+        pcb_hole_id: hole.pcb_hole_id,
+        type: "pcb_hole",
+        x,
+        y,
+      }
     case "rotated_pill":
       return {
-        ...hole,
-        ...position,
         ccw_rotation: (hole.ccw_rotation + rotation) % 360,
+        hole_height: hole.hole_height,
+        hole_shape: "rotated_pill",
+        hole_width: hole.hole_width,
+        pcb_hole_id: hole.pcb_hole_id,
+        type: "pcb_hole",
+        x,
+        y,
       }
   }
 }
 
-const rotateFootprint = (
+export const rotateFootprint = (
   footprint: FootprintPreview,
   rotation: FootprintRotation,
 ): FootprintPreview => {
@@ -808,38 +859,9 @@ const padShapeSignature = (preview: FootprintPreview) =>
 const areClose = (left: number, right: number) =>
   Math.abs(left - right) <= 0.00001
 
-const areSamePoint = (
-  left: { x: number; y: number },
-  right: { x: number; y: number },
-) => areClose(left.x, right.x) && areClose(left.y, right.y)
-
-const haveSamePolygon = (left: PcbPadGeometry, right: PcbPadGeometry) => {
-  if (left.copper.shape !== "polygon" && right.copper.shape !== "polygon") {
-    return true
-  }
-  if (left.copper.shape !== "polygon" || right.copper.shape !== "polygon") {
-    return false
-  }
-  const leftPoints = getPolygonWorldPoints(left.copper)
-  const rightPoints = getPolygonWorldPoints(right.copper)
-  if (leftPoints.length !== rightPoints.length) return false
-
-  const matchesFrom = (startIndex: number, direction: 1 | -1) =>
-    leftPoints.every((leftPoint, index) => {
-      const rightIndex =
-        (startIndex + direction * index + rightPoints.length) %
-        rightPoints.length
-      return areSamePoint(leftPoint, rightPoints[rightIndex])
-    })
-
-  return rightPoints.some(
-    (rightPoint, startIndex) =>
-      areSamePoint(leftPoints[0], rightPoint) &&
-      (matchesFrom(startIndex, 1) || matchesFrom(startIndex, -1)),
-  )
-}
-
-const haveSameOrientedPads = (
+// Geometry has already been matched before orientation is encoded. At this
+// point only pad/hole placement and pin identity determine pin1location.
+const haveSamePadPlacement = (
   left: FootprintPreview,
   right: FootprintPreview,
 ) => {
@@ -855,34 +877,11 @@ const haveSameOrientedPads = (
   const padsMatch = leftPads.every((leftPad, index) => {
     const rightPad = rightPads[index]
     if (!rightPad) return false
-    const leftSize = getOrientedPadSize(leftPad)
-    const rightSize = getOrientedPadSize(rightPad)
-    const holesMatch =
-      !leftPad.drill && !rightPad.drill
-        ? true
-        : Boolean(leftPad.drill && rightPad.drill) &&
-          leftPad.drill?.shape === rightPad.drill?.shape &&
-          areClose(
-            (leftPad.drill?.x ?? leftPad.copper.x) - leftPad.copper.x,
-            (rightPad.drill?.x ?? rightPad.copper.x) - rightPad.copper.x,
-          ) &&
-          areClose(
-            (leftPad.drill?.y ?? leftPad.copper.y) - leftPad.copper.y,
-            (rightPad.drill?.y ?? rightPad.copper.y) - rightPad.copper.y,
-          ) &&
-          areClose(leftPad.drill?.width ?? 0, rightPad.drill?.width ?? 0) &&
-          areClose(leftPad.drill?.height ?? 0, rightPad.drill?.height ?? 0) &&
-          areClose(leftPad.drill?.rotation ?? 0, rightPad.drill?.rotation ?? 0)
     return (
       leftPad.element.type === rightPad.element.type &&
-      leftPad.copper.shape === rightPad.copper.shape &&
       getPortHints(leftPad).join("|") === getPortHints(rightPad).join("|") &&
       areClose(leftPad.copper.x, rightPad.copper.x) &&
-      areClose(leftPad.copper.y, rightPad.copper.y) &&
-      areClose(leftSize.width, rightSize.width) &&
-      areClose(leftSize.height, rightSize.height) &&
-      haveSamePolygon(leftPad, rightPad) &&
-      holesMatch
+      areClose(leftPad.copper.y, rightPad.copper.y)
     )
   })
   if (!padsMatch) return false
@@ -892,14 +891,8 @@ const haveSameOrientedPads = (
   return leftHoles.every((leftHole, index) => {
     const rightHole = rightHoles[index]
     if (!rightHole) return false
-    const leftBounds = getShapeListBounds([{ ...leftHole, x: 0, y: 0 }])
-    const rightBounds = getShapeListBounds([{ ...rightHole, x: 0, y: 0 }])
     return (
-      leftHole.shape === rightHole.shape &&
-      areClose(leftHole.x, rightHole.x) &&
-      areClose(leftHole.y, rightHole.y) &&
-      areClose(leftBounds.width, rightBounds.width) &&
-      areClose(leftBounds.height, rightBounds.height)
+      areClose(leftHole.x, rightHole.x) && areClose(leftHole.y, rightHole.y)
     )
   })
 }
@@ -914,7 +907,7 @@ const encodeOrientationInFootprinterString = (
   for (const [side, alignment] of PIN1_LOCATIONS) {
     const orientedString = `${footprinterString}_pin1location(${side},${alignment})`
     const preview = tryBuild(orientedString)
-    if (preview && haveSameOrientedPads(preview, orientedPreview)) {
+    if (preview && haveSamePadPlacement(preview, orientedPreview)) {
       return orientedString
     }
   }

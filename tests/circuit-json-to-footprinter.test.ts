@@ -1,10 +1,22 @@
 import { expect, test } from "bun:test"
 import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
-import { circuitJsonToFootprinter } from "../lib/index.js"
+import { rotateFootprint } from "../lib/discover-footprinter.js"
+import { circuitJsonToFootprinter, circuitJsonToPreview } from "../lib/index.js"
 
 const circuitJsonFromFootprinter = (footprinterString: string) =>
-  fp.string(footprinterString).circuitJson() as AnyCircuitElement[]
+  fp.string(footprinterString).circuitJson()
+
+const rotatedCircuitJsonFromFootprinter = (
+  footprinterString: string,
+  rotation: 90 | 270,
+) => {
+  const preview = rotateFootprint(
+    circuitJsonToPreview(circuitJsonFromFootprinter(footprinterString)),
+    rotation,
+  )
+  return [...preview.pads, ...preview.holes]
+}
 
 test("recovers a parameterized dual-row footprint", () => {
   const result = circuitJsonToFootprinter(
@@ -99,11 +111,14 @@ test("recovers a two-sided footprint with a center thermal pad", () => {
 
 test("swaps thermal-pad dimensions for a rotated two-sided footprint", () => {
   const source =
-    "dfn8_p1.27mm_w7.6mm_pw0.574mm_pl2.038mm_thermalpad3.2x2.4mm_pillpads_pin1location(leftside,bottom)"
-  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
-    maxCandidates: 3,
-    sourceHints: ["HTSSOP-8 exposed pad"],
-  })
+    "dfn8_p1.27mm_w7.6mm_pw0.574mm_pl2.038mm_thermalpad3.2x2.4mm_pillpads"
+  const result = circuitJsonToFootprinter(
+    rotatedCircuitJsonFromFootprinter(source, 90),
+    {
+      maxCandidates: 3,
+      sourceHints: ["HTSSOP-8 exposed pad"],
+    },
+  )
 
   expect(result.diagnostics.topology).toBe("two-sided")
   expect(result.best?.family).toBe("dfn")
@@ -124,10 +139,13 @@ test("produces an exact passive footprint string", () => {
 
 test("encodes a rotated match in the footprinter string", () => {
   const source = "soic8_pin1location(topside,right)"
-  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
-    maxCandidates: 3,
-    sourceHints: ["SOIC-8"],
-  })
+  const result = circuitJsonToFootprinter(
+    rotatedCircuitJsonFromFootprinter("soic8", 270),
+    {
+      maxCandidates: 3,
+      sourceHints: ["SOIC-8"],
+    },
+  )
 
   expect(result.best?.footprinterString).toContain("pin1location(")
   expect(result.best).not.toHaveProperty("pcbRotation")
@@ -138,12 +156,14 @@ test("encodes a rotated match in the footprinter string", () => {
 })
 
 test("uses oriented dimensions to recover a rotated dual-row footprint", () => {
-  const source =
-    "soic8_p1.27mm_w7.3604mm_pw0.5684mm_pl1.9502mm_pillpads_pin1location(leftside,bottom)"
-  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
-    maxCandidates: 3,
-    sourceHints: ["SOIC-8"],
-  })
+  const source = "soic8_p1.27mm_w7.3604mm_pw0.5684mm_pl1.9502mm_pillpads"
+  const result = circuitJsonToFootprinter(
+    rotatedCircuitJsonFromFootprinter(source, 90),
+    {
+      maxCandidates: 3,
+      sourceHints: ["SOIC-8"],
+    },
+  )
 
   expect(result.best?.family).toBe("soic")
   expect(result.best?.footprinterString).toContain(

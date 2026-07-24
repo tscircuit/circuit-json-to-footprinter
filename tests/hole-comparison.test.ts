@@ -1,17 +1,20 @@
 import { expect, test } from "bun:test"
 import { fp } from "@tscircuit/footprinter"
 import type {
-  AnyCircuitElement,
   PcbHole,
   PcbPlatedHole,
   PcbSmtPad,
+  PcbSmtPadRotatedPill,
+  PcbSmtPadRotatedRect,
 } from "circuit-json"
+import { rotateFootprint } from "../lib/discover-footprinter.js"
 import {
   circuitJsonToFootprinter,
   circuitJsonToPreview,
   footprinterStringToPreview,
   summarizeCopperComparison,
 } from "../lib/index.js"
+import { getPcbPadGeometry } from "../lib/preview-geometry.js"
 
 test("compares drill geometry independently from outer copper", () => {
   const smallerHole = footprinterStringToPreview(
@@ -55,6 +58,7 @@ test("preserves rectangular pads and offset rotated slots", () => {
       hole_shape: "rotated_pill",
       hole_width: 1.2,
       layers: ["top", "bottom"],
+      pad_shape: "rect",
       pcb_plated_hole_id: "pcb_plated_hole_1",
       rect_border_radius: 0.15,
       rect_ccw_rotation: 15,
@@ -64,7 +68,7 @@ test("preserves rectangular pads and offset rotated slots", () => {
       type: "pcb_plated_hole",
       x: 4,
       y: 5,
-    } as AnyCircuitElement,
+    },
   ])
 
   expect(preview.pads[0]).toMatchObject({
@@ -83,11 +87,60 @@ test("preserves rectangular pads and offset rotated slots", () => {
     x: 4,
     y: 5,
   })
+  expect(getPcbPadGeometry(preview.pads[0]).copper).toMatchObject({
+    cornerRadius: 0.15,
+    rotation: 15,
+  })
+})
+
+test("uses canonical SMT pad corner radius fields", () => {
+  const pad = {
+    corner_radius: 2,
+    height: 1,
+    layer: "top",
+    pcb_smtpad_id: "pcb_smtpad_rounded",
+    shape: "rect",
+    type: "pcb_smtpad",
+    width: 2,
+    x: 0,
+    y: 0,
+  } satisfies PcbSmtPad
+
+  expect(getPcbPadGeometry(pad).copper.cornerRadius).toBe(0.5)
+})
+
+test("uses Circuit JSON rotated SMT pad types", () => {
+  const rotatedRect = {
+    ccw_rotation: 30,
+    height: 1,
+    layer: "top",
+    pcb_smtpad_id: "pcb_smtpad_rotated_rect",
+    shape: "rotated_rect",
+    type: "pcb_smtpad",
+    width: 2,
+    x: 0,
+    y: 0,
+  } satisfies PcbSmtPadRotatedRect
+  const rotatedPill = {
+    ccw_rotation: 60,
+    height: 1,
+    layer: "top",
+    pcb_smtpad_id: "pcb_smtpad_rotated_pill",
+    radius: 0.5,
+    shape: "rotated_pill",
+    type: "pcb_smtpad",
+    width: 2,
+    x: 0,
+    y: 0,
+  } satisfies PcbSmtPadRotatedPill
+
+  expect(getPcbPadGeometry(rotatedRect).copper.rotation).toBe(30)
+  expect(getPcbPadGeometry(rotatedPill).copper.rotation).toBe(60)
 })
 
 test("uses hole dimensions when recovering inner diameter", () => {
   const source = "pinrow2_p2.54mm_id0.7mm_od1.6mm"
-  const circuitJson = fp.string(source).circuitJson() as AnyCircuitElement[]
+  const circuitJson = fp.string(source).circuitJson()
   const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 3 })
 
   expect(result.best?.footprinterString).toContain("id0.7mm")
@@ -158,4 +211,55 @@ test("compares non-plated PcbHole geometry", () => {
 
   expect(comparison.copperIntersectionOverUnion).toBe(1)
   expect(comparison.holeIntersectionOverUnion).toBeCloseTo(0.25, 1)
+})
+
+test("rotates non-plated holes using their Circuit JSON shape types", () => {
+  const smtPad = {
+    height: 1,
+    layer: "top",
+    pcb_smtpad_id: "pcb_smtpad_1",
+    shape: "rect",
+    type: "pcb_smtpad",
+    width: 1,
+    x: 0,
+    y: 0,
+  } satisfies PcbSmtPad
+  const preview = rotateFootprint(
+    {
+      holes: [
+        {
+          hole_height: 1,
+          hole_shape: "rect",
+          hole_width: 2,
+          pcb_hole_id: "pcb_hole_rect",
+          type: "pcb_hole",
+          x: 2,
+          y: 0,
+        },
+        {
+          hole_height: 1,
+          hole_shape: "pill",
+          hole_width: 2,
+          pcb_hole_id: "pcb_hole_pill",
+          type: "pcb_hole",
+          x: -2,
+          y: 0,
+        },
+      ],
+      pads: [smtPad],
+      subtitle: "",
+      title: "",
+    },
+    90,
+  )
+
+  expect(preview.holes[0]).toMatchObject({
+    hole_height: 2,
+    hole_shape: "rect",
+    hole_width: 1,
+  })
+  expect(preview.holes[1]).toMatchObject({
+    ccw_rotation: 90,
+    hole_shape: "rotated_pill",
+  })
 })
