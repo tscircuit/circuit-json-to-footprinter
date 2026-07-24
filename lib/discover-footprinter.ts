@@ -555,8 +555,16 @@ const tryBuild = (footprinterString: string) => {
   }
 }
 
-const formatMillimeters = (value: number) =>
-  `${Number(value.toFixed(4)).toString()}mm`
+const roundToTenMicrometers = (value: number) =>
+  Number((Math.round(value * 100) / 100).toFixed(2))
+
+const formatLength = (value: number) => {
+  const millimeters = roundToTenMicrometers(value)
+  if (millimeters > 0 && millimeters < 1) {
+    return `${Math.round(millimeters * 1_000)}um`
+  }
+  return `${millimeters}mm`
+}
 
 const buildParameterizedString = (
   seed: string,
@@ -564,9 +572,7 @@ const buildParameterizedString = (
 ) => {
   const suffix = NUMERIC_PARAMETERS.flatMap((parameter) => {
     const value = parameters[parameter]
-    return value === undefined
-      ? []
-      : [`${parameter}${formatMillimeters(value)}`]
+    return value === undefined ? [] : [`${parameter}${formatLength(value)}`]
   }).join("_")
   return suffix ? `${seed}_${suffix}` : seed
 }
@@ -743,10 +749,10 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     // A 90-degree candidate rotation also rotates a non-square thermal pad.
     // Generate both source orientations so one remains aligned to the target.
     const thermalPadDimensionOptions = new Set([
-      `${formatMillimeters(analysis.thermalPad.width)}x${formatMillimeters(
+      `${formatLength(analysis.thermalPad.width)}x${formatLength(
         analysis.thermalPad.height,
       )}`,
-      `${formatMillimeters(analysis.thermalPad.height)}x${formatMillimeters(
+      `${formatLength(analysis.thermalPad.height)}x${formatLength(
         analysis.thermalPad.width,
       )}`,
     ])
@@ -802,11 +808,11 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
 
   if (padCount === 2 && analysis.platedHoleCount === 0) {
     const padBounds = target.pads.map(getPadBounds)
-    const passiveDimensions = `p${formatMillimeters(
+    const passiveDimensions = `p${formatLength(
       analysis.heuristics.p,
-    )}_pw${formatMillimeters(
+    )}_pw${formatLength(
       median(padBounds.map((bound) => bound.width)),
-    )}_ph${formatMillimeters(median(padBounds.map((bound) => bound.height)))}`
+    )}_ph${formatLength(median(padBounds.map((bound) => bound.height)))}`
     seeds.add(`res_${passiveDimensions}`)
     seeds.add(`cap_${passiveDimensions}`)
     for (const size of getFootprintSizes()) {
@@ -1051,7 +1057,7 @@ const optimizeSeed = (
   const simplifiedParameters = Object.fromEntries(
     Object.entries(best.parameters).map(([parameter, value]) => [
       parameter,
-      Number(value.toFixed(4)),
+      roundToTenMicrometers(value),
     ]),
   ) as Partial<Record<NumericParameter, number>>
   const bestSignature = geometrySignature(best.preview)

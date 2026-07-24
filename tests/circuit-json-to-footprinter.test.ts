@@ -112,14 +112,24 @@ test("swaps thermal-pad dimensions for a rotated two-sided footprint", () => {
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 })
 
-test("produces an exact passive footprint string", () => {
+test("uses compact micrometer units for sub-millimeter dimensions", () => {
   const source = "res_p1.3mm_pw0.55mm_ph0.7mm"
   const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
     maxCandidates: 2,
   })
 
-  expect(result.best?.footprinterString).toBe(source)
+  expect(result.best?.footprinterString).toBe("res_p1.3mm_pw550um_ph700um")
   expect(result.best?.copperIntersectionOverUnion).toBe(1)
+})
+
+test("rounds dimensions to the nearest 10 micrometers", () => {
+  const source = "res_p1.304mm_pw0.554mm_ph0.706mm"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 2,
+  })
+
+  expect(result.best?.footprinterString).toBe("res_p1.3mm_pw550um_ph710um")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 })
 
 test("encodes a rotated match in the footprinter string", () => {
@@ -160,8 +170,8 @@ test("infers a BGA grid and continuous dimensions", () => {
 
   expect(result.diagnostics.topology).toBe("grid")
   expect(result.best?.family).toBe("bga")
-  expect(result.best?.footprinterString).toContain("p0.65mm")
-  expect(result.best?.footprinterString).toContain("pad0.32mm")
+  expect(result.best?.footprinterString).toContain("p650um")
+  expect(result.best?.footprinterString).toContain("pad320um")
 }, 15_000)
 
 test("preserves the C2040-sized thermal pad independently of the body", () => {

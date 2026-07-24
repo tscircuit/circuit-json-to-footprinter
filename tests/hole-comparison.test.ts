@@ -86,6 +86,6 @@ test("uses hole dimensions when recovering inner diameter", () => {
   const circuitJson = fp.string(source).circuitJson() as AnyCircuitElement[]
   const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 3 })
 
-  expect(result.best?.footprinterString).toContain("id0.7mm")
+  expect(result.best?.footprinterString).toContain("id700um")
   expect(result.best?.holeIntersectionOverUnion).toBeGreaterThan(0.98)
 })
