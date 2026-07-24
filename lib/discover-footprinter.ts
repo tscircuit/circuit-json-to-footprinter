@@ -558,7 +558,7 @@ const tryBuild = (footprinterString: string) => {
 const roundToTenMicrometers = (value: number) =>
   Number((Math.round(value * 100) / 100).toFixed(2))
 
-const formatLength = (value: number) => {
+export const formatLength = (value: number) => {
   const millimeters = roundToTenMicrometers(value)
   if (millimeters > 0 && millimeters < 1) {
     return `${Math.round(millimeters * 1_000)}um`

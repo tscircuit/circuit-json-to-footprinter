@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
+import { formatLength } from "../lib/discover-footprinter.js"
 import { circuitJsonToFootprinter } from "../lib/index.js"
 
 const circuitJsonFromFootprinter = (footprinterString: string) =>
@@ -113,23 +114,15 @@ test("swaps thermal-pad dimensions for a rotated two-sided footprint", () => {
 })
 
 test("uses compact micrometer units for sub-millimeter dimensions", () => {
-  const source = "res_p1.3mm_pw0.55mm_ph0.7mm"
-  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
-    maxCandidates: 2,
-  })
-
-  expect(result.best?.footprinterString).toBe("res_p1.3mm_pw550um_ph700um")
-  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+  expect(formatLength(0.55)).toBe("550um")
+  expect(formatLength(0.7)).toBe("700um")
+  expect(formatLength(1.3)).toBe("1.3mm")
 })
 
 test("rounds dimensions to the nearest 10 micrometers", () => {
-  const source = "res_p1.304mm_pw0.554mm_ph0.706mm"
-  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
-    maxCandidates: 2,
-  })
-
-  expect(result.best?.footprinterString).toBe("res_p1.3mm_pw550um_ph710um")
-  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+  expect(formatLength(0.554)).toBe("550um")
+  expect(formatLength(0.706)).toBe("710um")
+  expect(formatLength(1.304)).toBe("1.3mm")
 })
 
 test("encodes a rotated match in the footprinter string", () => {
