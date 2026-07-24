@@ -113,15 +113,19 @@ test("swaps thermal-pad dimensions for a rotated two-sided footprint", () => {
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 })
 
-test("uses compact micrometer units for sub-millimeter dimensions", () => {
-  expect(formatLength(0.55)).toBe("550um")
-  expect(formatLength(0.7)).toBe("700um")
+test("uses micrometer units only for dimensions below 0.1mm", () => {
+  expect(formatLength(0.05)).toBe("50um")
+  expect(formatLength(0.09)).toBe("90um")
+  expect(formatLength(0.1)).toBe("0.1mm")
+  expect(formatLength(0.55)).toBe("0.55mm")
   expect(formatLength(1.3)).toBe("1.3mm")
 })
 
 test("rounds dimensions to the nearest 10 micrometers", () => {
-  expect(formatLength(0.554)).toBe("550um")
-  expect(formatLength(0.706)).toBe("710um")
+  expect(formatLength(0.054)).toBe("50um")
+  expect(formatLength(0.056)).toBe("60um")
+  expect(formatLength(0.554)).toBe("0.55mm")
+  expect(formatLength(0.706)).toBe("0.71mm")
   expect(formatLength(1.304)).toBe("1.3mm")
 })
 
@@ -163,8 +167,8 @@ test("infers a BGA grid and continuous dimensions", () => {
 
   expect(result.diagnostics.topology).toBe("grid")
   expect(result.best?.family).toBe("bga")
-  expect(result.best?.footprinterString).toContain("p650um")
-  expect(result.best?.footprinterString).toContain("pad320um")
+  expect(result.best?.footprinterString).toContain("p0.65mm")
+  expect(result.best?.footprinterString).toContain("pad0.32mm")
 }, 15_000)
 
 test("preserves the C2040-sized thermal pad independently of the body", () => {

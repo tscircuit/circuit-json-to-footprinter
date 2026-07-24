@@ -560,7 +560,7 @@ const roundToTenMicrometers = (value: number) =>
 
 export const formatLength = (value: number) => {
   const millimeters = roundToTenMicrometers(value)
-  if (millimeters > 0 && millimeters < 1) {
+  if (millimeters > 0 && millimeters < 0.1) {
     return `${Math.round(millimeters * 1_000)}um`
   }
   return `${millimeters}mm`
