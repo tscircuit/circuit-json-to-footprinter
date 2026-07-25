@@ -659,6 +659,16 @@ const getGeometryLoss = (
       Math.max(targetSize.height, 0.05)
 
     loss += dx * dx * 4 + dy * dy * 4 + dw * dw + dh * dh
+    if (candidatePad.shape === "rect" && targetPad.shape === "rect") {
+      const cornerRadiusScale = Math.max(
+        Math.min(targetSize.width, targetSize.height) / 2,
+        0.05,
+      )
+      const cornerRadiusDifference =
+        ((candidatePad.cornerRadius ?? 0) - (targetPad.cornerRadius ?? 0)) /
+        cornerRadiusScale
+      loss += cornerRadiusDifference * cornerRadiusDifference
+    }
     if (candidatePad.kind !== targetPad.kind) loss += 4
     if (candidatePad.shape !== targetPad.shape) loss += 0.08
     if (Boolean(candidatePad.hole) !== Boolean(targetPad.hole)) {
@@ -752,6 +762,9 @@ export const formatLength = (value: number) => {
   return `${millimeters}mm`
 }
 
+const formatRoundedRadius = (value: number) =>
+  `${roundToTenMicrometers(value)}mm`
+
 const buildParameterizedString = (
   seed: string,
   parameters: Partial<Record<NumericParameter, number>>,
@@ -787,6 +800,7 @@ const geometrySignature = (preview: FootprintPreview) =>
         pad.y,
         pad.width,
         pad.height,
+        pad.cornerRadius ?? 0,
         pad.rotation,
         pointSignature,
         holeSignature,
@@ -804,6 +818,80 @@ const padShapeSignature = (preview: FootprintPreview) =>
 
 const areClose = (left: number, right: number) =>
   Math.abs(left - right) <= 0.00001
+
+const getRectPads = (preview: FootprintPreview) =>
+  preview.pads.filter((pad) => pad.shape === "rect")
+
+const getGlobalRoundedRadius = (target: FootprintPreview) => {
+  const rectPads = getRectPads(target)
+  if (!rectPads.length) return undefined
+
+  const padRadii = rectPads.map((pad) => ({
+    limit: Math.min(pad.width, pad.height) / 2,
+    radius: pad.cornerRadius ?? 0,
+  }))
+  const unclampedRadii = padRadii
+    .filter(({ limit, radius }) => radius < limit && !areClose(radius, limit))
+    .map(({ radius }) => radius)
+  const radius = unclampedRadii.length
+    ? unclampedRadii[0]
+    : Math.max(...padRadii.map(({ limit }) => limit))
+
+  if (unclampedRadii.some((value) => !areClose(value, radius))) {
+    return undefined
+  }
+  if (
+    padRadii.some((pad) => !areClose(pad.radius, Math.min(radius, pad.limit)))
+  ) {
+    return undefined
+  }
+
+  return radius
+}
+
+const haveMatchingRectPadRadii = (
+  left: FootprintPreview,
+  right: FootprintPreview,
+) => {
+  const getSortedRadii = (preview: FootprintPreview) =>
+    getRectPads(preview)
+      .map((pad) => pad.cornerRadius ?? 0)
+      .toSorted((a, b) => a - b)
+  const leftRadii = getSortedRadii(left)
+  const rightRadii = getSortedRadii(right)
+  return (
+    leftRadii.length === rightRadii.length &&
+    leftRadii.every((radius, index) => areClose(radius, rightRadii[index]))
+  )
+}
+
+const applyGlobalRoundedRadius = <T extends SeedCandidate>(
+  candidate: T,
+  target: FootprintPreview,
+  roundedRadius: number | undefined,
+): T => {
+  if (
+    roundedRadius === undefined ||
+    getRectPads(candidate.preview).length === 0 ||
+    haveMatchingRectPadRadii(candidate.preview, target)
+  ) {
+    return candidate
+  }
+
+  const footprinterString = `${
+    candidate.footprinterString
+  }_rounded${formatRoundedRadius(roundedRadius)}`
+  const unrotatedPreview = tryBuild(footprinterString)
+  if (!unrotatedPreview) return candidate
+  const preview = rotateFootprint(unrotatedPreview, candidate.searchRotation)
+
+  return {
+    ...candidate,
+    footprinterString,
+    geometryScore: getGeometryScore(preview, target),
+    preview,
+  }
+}
 
 const areSamePoint = (
   left: { x: number; y: number },
@@ -861,6 +949,7 @@ const haveSameOrientedPads = (
       areClose(leftPad.y, rightPad.y) &&
       areClose(leftSize.width, rightSize.width) &&
       areClose(leftSize.height, rightSize.height) &&
+      areClose(leftPad.cornerRadius ?? 0, rightPad.cornerRadius ?? 0) &&
       haveSamePolygon(leftPad, rightPad) &&
       holesMatch
     )
@@ -1334,34 +1423,39 @@ export const discoverFootprinterString = (
   maxCandidates = 5,
 ): FootprinterDiscoveryResult => {
   const analysis = analyzeTarget(target)
+  const roundedRadius = getGlobalRoundedRadius(target)
   const rawSeeds = generateSeeds(target, analysis)
-  const seedCandidates = rawSeeds.flatMap((footprinterString) => {
-    const unrotatedPreview = tryBuild(footprinterString)
-    if (
-      !unrotatedPreview ||
-      unrotatedPreview.pads.length !== target.pads.length
-    ) {
-      return []
-    }
+  const seedCandidates = rawSeeds
+    .flatMap((footprinterString) => {
+      const unrotatedPreview = tryBuild(footprinterString)
+      if (
+        !unrotatedPreview ||
+        unrotatedPreview.pads.length !== target.pads.length
+      ) {
+        return []
+      }
 
-    return FOOTPRINT_ROTATIONS.flatMap((searchRotation): SeedCandidate[] => {
-      const preview = rotateFootprint(unrotatedPreview, searchRotation)
-      const platedHoleCount = preview.pads.filter(
-        (pad) => pad.kind === "plated-hole",
-      ).length
-      if (platedHoleCount !== analysis.platedHoleCount) return []
+      return FOOTPRINT_ROTATIONS.flatMap((searchRotation): SeedCandidate[] => {
+        const preview = rotateFootprint(unrotatedPreview, searchRotation)
+        const platedHoleCount = preview.pads.filter(
+          (pad) => pad.kind === "plated-hole",
+        ).length
+        if (platedHoleCount !== analysis.platedHoleCount) return []
 
-      return [
-        {
-          family: getFamily(footprinterString),
-          footprinterString,
-          geometryScore: getGeometryScore(preview, target),
-          preview,
-          searchRotation,
-        },
-      ]
+        return [
+          {
+            family: getFamily(footprinterString),
+            footprinterString,
+            geometryScore: getGeometryScore(preview, target),
+            preview,
+            searchRotation,
+          },
+        ]
+      })
     })
-  })
+    .map((candidate) =>
+      applyGlobalRoundedRadius(candidate, target, roundedRadius),
+    )
   seedCandidates.sort(
     (left, right) =>
       right.geometryScore - left.geometryScore ||
