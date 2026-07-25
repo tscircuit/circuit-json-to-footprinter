@@ -48,6 +48,7 @@ const PIN1_LOCATIONS: Pin1Location[] = [
 
 interface TargetAnalysis {
   bounds: Bounds
+  fpc?: FpcAnalysis
   gridColumns: number
   gridRows: number
   heuristics: Record<NumericParameter, number>
@@ -62,6 +63,23 @@ interface TargetAnalysis {
   }
   topology: Topology
   verticalSidePadCount: number
+}
+
+interface FpcAnalysis {
+  bottomPadLength: number
+  mountingPadLength: number
+  mountingPadPitch: number
+  mountingPadRowDistance: number
+  mountingPadWidth: number
+  mountingPadsOnTop: boolean
+  padLength: number
+  padPitch: number
+  padWidth: number
+  pinCount: number
+  reverse: boolean
+  rowPitch: number
+  staggered: boolean
+  topPadLength: number
 }
 
 interface SeedCandidate {
@@ -197,6 +215,165 @@ const getPitchEstimate = (pads: PreviewPad[], tolerance: number) => {
   const sortedDifferences = differences.toSorted((left, right) => left - right)
   return sortedDifferences[Math.floor((sortedDifferences.length - 1) * 0.25)]
 }
+
+const analyzeFpcAxis = (
+  target: FootprintPreview,
+  alongAxis: "x" | "y",
+): FpcAnalysis | undefined => {
+  const acrossAxis = alongAxis === "x" ? "y" : "x"
+  if (
+    target.pads.length < 4 ||
+    target.pads.some(
+      (pad) =>
+        pad.kind !== "smt" ||
+        pad.hole ||
+        (pad.shape !== "rect" && pad.shape !== "pill"),
+    )
+  ) {
+    return undefined
+  }
+
+  const entries = target.pads.map((pad) => {
+    const bounds = getPadBounds(pad)
+    const alongSize = alongAxis === "x" ? bounds.width : bounds.height
+    const acrossSize = alongAxis === "x" ? bounds.height : bounds.width
+    return {
+      across: pad[acrossAxis],
+      acrossSize,
+      along: pad[alongAxis],
+      alongSize,
+      area: bounds.width * bounds.height,
+      pad,
+    }
+  })
+  const mountingPads = entries
+    .toSorted((left, right) => right.area - left.area)
+    .slice(0, 2)
+    .toSorted((left, right) => left.along - right.along)
+  const mountingPadSet = new Set(mountingPads.map(({ pad }) => pad))
+  const contactPads = entries
+    .filter(({ pad }) => !mountingPadSet.has(pad))
+    .toSorted((left, right) => left.along - right.along)
+  if (contactPads.length < 2) return undefined
+
+  const contactDifferences = contactPads
+    .slice(1)
+    .map((entry, index) => entry.along - contactPads[index].along)
+  const padPitch = median(contactDifferences)
+  const pitchTolerance = Math.max(0.025, padPitch * 0.08)
+  if (
+    padPitch <= 0.08 ||
+    contactDifferences.some(
+      (difference) =>
+        difference <= 0 || Math.abs(difference - padPitch) > pitchTolerance,
+    )
+  ) {
+    return undefined
+  }
+
+  const firstContact = contactPads[0]
+  const lastContact = contactPads.at(-1)!
+  const mountingMargin = Math.max(0.05, padPitch * 0.1)
+  if (
+    mountingPads[0].along >= firstContact.along - mountingMargin ||
+    mountingPads[1].along <= lastContact.along + mountingMargin
+  ) {
+    return undefined
+  }
+
+  const contactCenter = (firstContact.along + lastContact.along) / 2
+  const mountingCenter = (mountingPads[0].along + mountingPads[1].along) / 2
+  if (
+    Math.abs(contactCenter - mountingCenter) > Math.max(0.08, padPitch * 0.3)
+  ) {
+    return undefined
+  }
+
+  const mountingAreaRatio =
+    median(mountingPads.map(({ area }) => area)) /
+    Math.max(median(contactPads.map(({ area }) => area)), 0.0001)
+  const description = `${target.title} ${target.subtitle} ${
+    target.sourceHints?.join(" ") ?? ""
+  }`.toLowerCase()
+  const hasFpcHint =
+    description.includes("fpc") ||
+    description.includes("ffc") ||
+    description.includes("flat flexible")
+  if (!hasFpcHint && (contactPads.length < 5 || mountingAreaRatio < 1.35)) {
+    return undefined
+  }
+  if (mountingAreaRatio < 1.15) return undefined
+
+  const mountingPadAreaDifference =
+    Math.abs(mountingPads[0].area - mountingPads[1].area) /
+    Math.max(mountingPads[0].area, mountingPads[1].area)
+  if (mountingPadAreaDifference > 0.3) return undefined
+
+  const contactAcrossTolerance = Math.max(
+    0.035,
+    median(contactPads.map(({ acrossSize }) => acrossSize)) * 0.08,
+  )
+  const rows = clusterCoordinates(
+    contactPads.map(({ across }) => across),
+    contactAcrossTolerance,
+  )
+  if (rows.length < 1 || rows.length > 2) return undefined
+
+  const staggered = rows.length === 2
+  const rowIndex = (across: number) =>
+    Math.abs(across - rows[0]) <= Math.abs(across - rows[1]) ? 0 : 1
+  if (
+    staggered &&
+    contactPads
+      .slice(1)
+      .some(
+        (entry, index) =>
+          rowIndex(entry.across) === rowIndex(contactPads[index].across),
+      )
+  ) {
+    return undefined
+  }
+
+  const lowerRow = staggered
+    ? contactPads.filter(({ across }) => rowIndex(across) === 0)
+    : contactPads
+  const upperRow = staggered
+    ? contactPads.filter(({ across }) => rowIndex(across) === 1)
+    : contactPads
+  const contactRowCenter = staggered ? (rows[0] + rows[1]) / 2 : rows[0]
+  const mountingRowCenter = median(mountingPads.map(({ across }) => across))
+  const mountingPadRowDistance = Math.abs(mountingRowCenter - contactRowCenter)
+  if (
+    Math.abs(mountingPads[0].across - mountingPads[1].across) >
+    Math.max(
+      0.1,
+      median(mountingPads.map(({ acrossSize }) => acrossSize)) * 0.2,
+    )
+  ) {
+    return undefined
+  }
+
+  return {
+    bottomPadLength: median(lowerRow.map(({ acrossSize }) => acrossSize)),
+    mountingPadLength: median(mountingPads.map(({ acrossSize }) => acrossSize)),
+    mountingPadPitch: mountingPads[1].along - mountingPads[0].along,
+    mountingPadRowDistance,
+    mountingPadWidth: median(mountingPads.map(({ alongSize }) => alongSize)),
+    mountingPadsOnTop:
+      mountingPadRowDistance >= 0.005 && mountingRowCenter > contactRowCenter,
+    padLength: median(contactPads.map(({ acrossSize }) => acrossSize)),
+    padPitch,
+    padWidth: median(contactPads.map(({ alongSize }) => alongSize)),
+    pinCount: contactPads.length,
+    reverse: staggered && rowIndex(firstContact.across) === 1,
+    rowPitch: staggered ? rows[1] - rows[0] : 0,
+    staggered,
+    topPadLength: median(upperRow.map(({ acrossSize }) => acrossSize)),
+  }
+}
+
+const analyzeFpc = (target: FootprintPreview) =>
+  analyzeFpcAxis(target, "x") ?? analyzeFpcAxis(target, "y")
 
 const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
   const bounds = getBounds(target.pads)
@@ -345,6 +522,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
 
   return {
     bounds,
+    fpc: analyzeFpc(target),
     gridColumns: xCoordinates.length,
     gridRows: yCoordinates.length,
     heuristics: {
@@ -520,6 +698,7 @@ const getDomainScore = (target: FootprintPreview, family: string) => {
   const aliases: Record<string, string[]> = {
     cap: ["capacitor", "cap"],
     dfn: ["dfn"],
+    fpc: ["fpc", "ffc", "flat flexible"],
     lga: ["lga"],
     qfn: ["qfn"],
     res: ["resistor", "res"],
@@ -700,6 +879,7 @@ const encodeOrientationInFootprinterString = (
 }
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
+  if (analysis.fpc) return new Set(["fpc"])
   if (analysis.platedHoleCount > analysis.perimeterPadCount / 2) {
     return new Set([
       "dip",
@@ -743,6 +923,47 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     seeds.add(`${family}${padCount}`)
     // Mid-mount USB-C variants are named by their explicit 16-pin form.
     if (family !== "usbcmidmount") seeds.add(family)
+  }
+
+  if (analysis.fpc) {
+    const {
+      bottomPadLength,
+      mountingPadLength,
+      mountingPadPitch,
+      mountingPadRowDistance,
+      mountingPadWidth,
+      mountingPadsOnTop,
+      padLength,
+      padPitch,
+      padWidth,
+      pinCount,
+      reverse,
+      rowPitch,
+      staggered,
+      topPadLength,
+    } = analysis.fpc
+    const flags = [
+      staggered ? "staggered" : "",
+      reverse ? "reverse" : "",
+      mountingPadsOnTop ? "mounttop" : "",
+    ].filter(Boolean)
+    const parameters = [
+      `p${formatLength(padPitch)}`,
+      `pw${formatLength(padWidth)}`,
+      `pl${formatLength(padLength)}`,
+      ...(staggered
+        ? [
+            `py${formatLength(rowPitch)}`,
+            `toppl${formatLength(topPadLength)}`,
+            `bottompl${formatLength(bottomPadLength)}`,
+          ]
+        : []),
+      `mpx${formatLength(mountingPadPitch)}`,
+      `mpy${formatLength(mountingPadRowDistance)}`,
+      `mpw${formatLength(mountingPadWidth)}`,
+      `mpl${formatLength(mountingPadLength)}`,
+    ]
+    seeds.add(`fpc${pinCount}_${[...flags, ...parameters].join("_")}`)
   }
 
   if (analysis.thermalPad && analysis.perimeterPadCount > 0) {
@@ -929,6 +1150,11 @@ const findActiveParameters = (
   seed: SeedCandidate,
   analysis: TargetAnalysis,
 ) => {
+  // FPC analysis emits a complete parameterization from the repeated contact
+  // and mounting-pad geometry; appending duplicate generic parameters would
+  // only make the result less readable.
+  if (seed.family === "fpc") return []
+
   const active: NumericParameter[] = []
   const baseSignature = geometrySignature(seed.preview)
   const heuristics = getOrientedHeuristics(seed, analysis)
