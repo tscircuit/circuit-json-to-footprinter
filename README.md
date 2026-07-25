@@ -32,8 +32,10 @@ then its alignment along that edge. For example, `pin1location(leftside,top)` me
 pin 1 is on the left edge near the top, as in JLCPCB's RP2040 footprint. The base
 QFN string above already has that orientation, so it needs no modifier. This is
 different from `pin1location(topside,left)`, which places pin 1 on the top edge near
-the left and cannot be produced from the RP2040 orientation by rotation alone. The
-input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
+the left and cannot be produced from the RP2040 orientation by rotation alone.
+When rectangular pads share a globally representable corner radius, the result
+also includes a `rounded${radius}` modifier. The input must contain at least one
+`pcb_smtpad` or `pcb_plated_hole` element.
 
 The package also exports `circuitJsonToPreview`, `footprinterStringToPreview`,
 `compareFootprints`, `summarizeCopperComparison`, and `getFootprintBounds` so

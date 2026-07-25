@@ -32,6 +32,50 @@ test("preserves pill-shaped pads when the footprint family supports them", () =>
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 })
 
+test("preserves a global rounded radius", () => {
+  const source = "soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm_rounded0.2mm"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8"],
+  })
+
+  expect(result.best?.family).toBe("soic")
+  expect(result.best?.footprinterString).toContain("_rounded0.2mm")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
+test("recovers a global radius when smaller pads are clamped", () => {
+  const source =
+    "soic8_p1.27mm_w6.2mm_pw0.4mm_pl1.4mm_thermalpad2mmx2mm_rounded0.3mm"
+  const circuitJson = circuitJsonFromFootprinter(source)
+  const sourceRadii = circuitJson
+    .filter(
+      (element) => element.type === "pcb_smtpad" && element.shape === "rect",
+    )
+    .map((pad) => pad.corner_radius)
+  const result = circuitJsonToFootprinter(circuitJson, {
+    maxCandidates: 3,
+    sourceHints: ["SOIC-8 exposed pad"],
+  })
+
+  expect(new Set(sourceRadii)).toEqual(new Set([0.2, 0.3]))
+  expect(result.best?.family).toBe("soic")
+  expect(result.best?.footprinterString).toContain("_rounded0.3mm")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
+test("preserves rounded rectangular plated-hole pads", () => {
+  const source = "dip8_rounded0.3mm"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["DIP-8"],
+  })
+
+  expect(result.best?.family).toBe("dip")
+  expect(result.best?.footprinterString).toContain("_rounded0.3mm")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+})
+
 test("preserves pill-shaped pads for quad footprints", () => {
   const source =
     "qfn32_p0.5mm_w5.8mm_h5.8mm_pw0.28mm_pl0.8mm_thermalpad3.4mmx3.4mm_pillpads"
