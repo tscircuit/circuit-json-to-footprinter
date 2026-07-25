@@ -57,12 +57,21 @@ interface TargetAnalysis {
   lgaPadWidth: number
   perimeterPadCount: number
   platedHoleCount: number
+  sparsePinGrid?: SparsePinGridAnalysis
   thermalPad?: {
     height: number
     width: number
   }
   topology: Topology
   verticalSidePadCount: number
+}
+
+interface SparsePinGridAnalysis {
+  columns: number
+  missingPositions: number[]
+  pitchX: number
+  pitchY: number
+  rows: number
 }
 
 interface FpcAnalysis {
@@ -396,6 +405,141 @@ const analyzeFpcAxis = (
 const analyzeFpc = (target: FootprintPreview) =>
   analyzeFpcAxis(target, "x") ?? analyzeFpcAxis(target, "y")
 
+interface LatticeAxisFit {
+  coordinates: number[]
+  count: number
+  indices: number[]
+  pitch: number
+}
+
+const fitLatticeAxis = (
+  values: number[],
+  clusterTolerance: number,
+  fitTolerance: number,
+): LatticeAxisFit | undefined => {
+  const coordinates = clusterCoordinates(values, clusterTolerance)
+  if (coordinates.length < 2) return undefined
+
+  const minimum = coordinates[0]
+  const maximum = coordinates.at(-1)!
+  const span = maximum - minimum
+  let best:
+    | (LatticeAxisFit & {
+        score: number
+      })
+    | undefined
+
+  for (
+    let count = coordinates.length;
+    count <= Math.min(coordinates.length + 10, 16);
+    count += 1
+  ) {
+    const pitch = span / (count - 1)
+    if (pitch <= fitTolerance) continue
+    const indices = coordinates.map((coordinate) =>
+      Math.round((coordinate - minimum) / pitch),
+    )
+    if (new Set(indices).size !== indices.length) continue
+    const maximumError = Math.max(
+      ...coordinates.map((coordinate, index) =>
+        Math.abs(coordinate - (minimum + indices[index] * pitch)),
+      ),
+    )
+    if (maximumError > fitTolerance) continue
+
+    // Prefer the smallest low-error lattice so arbitrary coordinates do not
+    // get explained by an unnecessarily dense grid.
+    const score =
+      maximumError + (count - coordinates.length) * fitTolerance * 0.02
+    if (!best || score < best.score) {
+      best = { coordinates, count, indices, pitch, score }
+    }
+  }
+
+  if (!best) return undefined
+  const { score: _score, ...fit } = best
+  return fit
+}
+
+const analyzeSparsePinGrid = (
+  target: FootprintPreview,
+  clusterTolerance: number,
+  medianPadShortSide: number,
+): SparsePinGridAnalysis | undefined => {
+  if (
+    target.pads.length < 4 ||
+    target.pads.some(
+      (pad) =>
+        pad.kind !== "plated-hole" ||
+        pad.shape !== "circle" ||
+        pad.hole?.shape !== "circle",
+    )
+  ) {
+    return undefined
+  }
+
+  const fitTolerance = Math.max(0.025, medianPadShortSide * 0.07)
+  const xFit = fitLatticeAxis(
+    target.pads.map((pad) => pad.x),
+    clusterTolerance,
+    fitTolerance,
+  )
+  const yFit = fitLatticeAxis(
+    target.pads.map((pad) => pad.y),
+    clusterTolerance,
+    fitTolerance,
+  )
+  if (!xFit || !yFit) return undefined
+
+  const gridPositionCount = xFit.count * yFit.count
+  if (
+    gridPositionCount <= target.pads.length ||
+    gridPositionCount > 32 ||
+    xFit.count < 2 ||
+    yFit.count < 2
+  ) {
+    return undefined
+  }
+
+  const findClusterIndex = (coordinate: number, clusters: number[]) => {
+    let bestIndex = 0
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const [index, cluster] of clusters.entries()) {
+      const distance = Math.abs(coordinate - cluster)
+      if (distance < bestDistance) {
+        bestIndex = index
+        bestDistance = distance
+      }
+    }
+    return bestIndex
+  }
+
+  const occupiedPositions = new Set<number>()
+  for (const pad of target.pads) {
+    const xClusterIndex = findClusterIndex(pad.x, xFit.coordinates)
+    const yClusterIndex = findClusterIndex(pad.y, yFit.coordinates)
+    const column = xFit.indices[xClusterIndex]
+    // Footprinter grids enumerate rows from top to bottom.
+    const row = yFit.count - 1 - yFit.indices[yClusterIndex]
+    const position = row * xFit.count + column + 1
+    if (occupiedPositions.has(position)) return undefined
+    occupiedPositions.add(position)
+  }
+
+  const missingPositions = Array.from(
+    { length: gridPositionCount },
+    (_, index) => index + 1,
+  ).filter((position) => !occupiedPositions.has(position))
+
+  return {
+    columns: xFit.count,
+    missingPositions,
+    pitchX: xFit.pitch,
+    pitchY: yFit.pitch,
+    rows: yFit.count,
+  }
+}
+
 const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
   const bounds = getBounds(target.pads)
   const padBounds = target.pads.map(getPadBounds)
@@ -540,6 +684,11 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     (pad) => pad.kind === "plated-hole",
   ).length
   const insetQuadAdjustment = topology === "four-sided" ? 0.2 : 0
+  const sparsePinGrid = analyzeSparsePinGrid(
+    target,
+    tolerance,
+    medianPadShortSide,
+  )
 
   return {
     bounds,
@@ -567,6 +716,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
       : median(topBottomEdgePads.map(({ bounds: bound }) => bound.width)),
     perimeterPadCount: sidePads.length,
     platedHoleCount,
+    sparsePinGrid,
     thermalPad: thermalPadEntry
       ? {
           height: thermalPadEntry.bound.height,
@@ -923,6 +1073,7 @@ const getPreferredFamilies = (analysis: TargetAnalysis) => {
     return new Set([
       "lga",
       "soic",
+      "sop8",
       "tssop",
       "ssop",
       "msop",
@@ -955,6 +1106,24 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     )
   ) {
     seeds.add(`dip${padCount}_nosquareplating`)
+  }
+
+  if (analysis.sparsePinGrid) {
+    const { columns, missingPositions, pitchX, pitchY, rows } =
+      analysis.sparsePinGrid
+    seeds.add(
+      [
+        `pinrow${padCount}`,
+        `rows${rows}`,
+        `cols${columns}`,
+        `p${formatLength(pitchX)}`,
+        `py${formatLength(pitchY)}`,
+        `missing(${missingPositions.join(",")})`,
+        "nosquareplating",
+        `od${formatLength(analysis.heuristics.od)}`,
+        `id${formatLength(analysis.heuristics.id)}`,
+      ].join("_"),
+    )
   }
 
   if (analysis.fpc) {
