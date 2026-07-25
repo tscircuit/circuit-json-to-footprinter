@@ -122,6 +122,20 @@ const getOrientedHeuristics = (
   seed: SeedCandidate,
   analysis: TargetAnalysis,
 ): Record<NumericParameter, number> => {
+  if (seed.family === "dip") {
+    const isQuarterTurn =
+      seed.searchRotation === 90 || seed.searchRotation === 270
+    const orientedOuterSpan = isQuarterTurn
+      ? analysis.bounds.height
+      : analysis.bounds.width
+    return {
+      ...analysis.heuristics,
+      // DIP w is the distance between pad centers, while the target bounds
+      // include the outer copper diameter on both edges.
+      w: Math.max(orientedOuterSpan - analysis.heuristics.od, 0.05),
+    }
+  }
+
   const heuristics =
     seed.family === "lga"
       ? {
@@ -852,7 +866,9 @@ const haveSameOrientedPads = (
           areClose(leftPad.hole?.offsetY ?? 0, rightPad.hole?.offsetY ?? 0) &&
           areClose(leftPad.hole?.width ?? 0, rightPad.hole?.width ?? 0) &&
           areClose(leftPad.hole?.height ?? 0, rightPad.hole?.height ?? 0) &&
-          areClose(leftPad.hole?.rotation ?? 0, rightPad.hole?.rotation ?? 0)
+          // Rotation has no geometric meaning for a circular drill.
+          (leftPad.hole?.shape === "circle" ||
+            areClose(leftPad.hole?.rotation ?? 0, rightPad.hole?.rotation ?? 0))
     return (
       leftPad.kind === rightPad.kind &&
       leftPad.shape === rightPad.shape &&
@@ -930,6 +946,15 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     seeds.add(`${family}${padCount}`)
     // Mid-mount USB-C variants are named by their explicit 16-pin form.
     if (family !== "usbcmidmount") seeds.add(family)
+  }
+
+  if (
+    analysis.platedHoleCount === padCount &&
+    target.pads.every(
+      (pad) => pad.shape === "circle" && pad.hole?.shape === "circle",
+    )
+  ) {
+    seeds.add(`dip${padCount}_nosquareplating`)
   }
 
   if (analysis.fpc) {
