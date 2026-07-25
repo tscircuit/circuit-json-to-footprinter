@@ -299,7 +299,14 @@ const analyzeFpcAxis = (
     description.includes("fpc") ||
     description.includes("ffc") ||
     description.includes("flat flexible")
-  if (!hasFpcHint && (contactPads.length < 5 || mountingAreaRatio < 1.35)) {
+  // Two-contact SMD connectors and some compact LEDs use the same mechanical
+  // pattern as a two-pin FPC: two central contacts and two outboard mounts.
+  const hasTwoContactWithMountsTopology = contactPads.length === 2
+  if (
+    !hasFpcHint &&
+    !hasTwoContactWithMountsTopology &&
+    (contactPads.length < 5 || mountingAreaRatio < 1.35)
+  ) {
     return undefined
   }
   if (mountingAreaRatio < 1.15) return undefined

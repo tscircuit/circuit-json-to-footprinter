@@ -120,6 +120,132 @@ const Fpc03hf31pwbh10 = () => (
   />
 )
 
+const Sm02bSurs = () => (
+  <chip
+    name="J1"
+    footprint={
+      <footprint>
+        <smtpad
+          portHints={["pin1"]}
+          pcbX={0.4}
+          pcbY={1}
+          width={0.5}
+          height={1.3}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin2"]}
+          pcbX={-0.4}
+          pcbY={1}
+          width={0.5}
+          height={1.3}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin3"]}
+          pcbX={-1.7}
+          pcbY={-0.8}
+          width={1.2}
+          height={1.7}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin4"]}
+          pcbX={1.7}
+          pcbY={-0.8}
+          width={1.2}
+          height={1.7}
+          shape="rect"
+        />
+      </footprint>
+    }
+  />
+)
+
+const B2bZr = () => (
+  <chip
+    name="J1"
+    footprint={
+      <footprint>
+        <smtpad
+          portHints={["pin1"]}
+          pcbX={-0.75}
+          pcbY={-0.7}
+          width={0.7}
+          height={3.8}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin2"]}
+          pcbX={0.75}
+          pcbY={-0.7}
+          width={0.7}
+          height={3.8}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin3"]}
+          pcbX={2.8}
+          pcbY={1.45}
+          width={1.5}
+          height={2.3}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin4"]}
+          pcbX={-2.8}
+          pcbY={1.45}
+          width={1.5}
+          height={2.3}
+          shape="rect"
+        />
+      </footprint>
+    }
+  />
+)
+
+const Xl3210Rgbc2812b = () => (
+  <chip
+    name="D1"
+    footprint={
+      <footprint>
+        <smtpad
+          portHints={["pin1"]}
+          pcbX={-1.5}
+          pcbY={0.075}
+          width={1}
+          height={0.7}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin4"]}
+          pcbX={1.5}
+          pcbY={0.075}
+          width={1}
+          height={0.7}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin2"]}
+          pcbX={-0.415}
+          pcbY={-0.175}
+          width={0.55}
+          height={0.5}
+          shape="rect"
+        />
+        <smtpad
+          portHints={["pin3"]}
+          pcbX={0.415}
+          pcbY={-0.175}
+          width={0.55}
+          height={0.5}
+          shape="rect"
+        />
+      </footprint>
+    }
+  />
+)
+
 test("recovers C2856799 FPC-05F-12PH20", async () => {
   const result = await expectFootprintRecovery({
     FootprintComponent: Fpc05f12ph20,
@@ -162,4 +288,52 @@ test("renders the asymmetric staggered FPC footprint", async () => {
     import.meta.path,
     "jlcpcb-fpc-03hf-31pwbh10",
   )
+})
+
+test("recovers C566239 SM02B-SURS without an FPC source hint", async () => {
+  const result = await expectFootprintRecovery({
+    FootprintComponent: Sm02bSurs,
+    sourceHints: ["C566239 SM02B-SURS-TF(LF)(SN) SMD P=0.8mm"],
+  })
+
+  expect(result.best!.family).toBe("fpc")
+  expect(result.best!.footprinterString).toBe(
+    "fpc2_p0.8mm_pw0.5mm_pl1.3mm_mpx3.4mm_mpy1.8mm_mpw1.2mm_mpl1.7mm",
+  )
+  expect(result.best!.copperIntersectionOverUnion).toBe(1)
+})
+
+test("recovers C265284 B2B-ZR with similarly sized mounting pads", async () => {
+  const result = await expectFootprintRecovery({
+    FootprintComponent: B2bZr,
+    sourceHints: ["C265284 B2B-ZR-SM4-TF(LF)(SN) SMD P=1.5mm"],
+  })
+
+  expect(result.best!.family).toBe("fpc")
+  expect(result.best!.footprinterString).toBe(
+    "fpc2_mounttop_p1.5mm_pw0.7mm_pl3.8mm_mpx5.6mm_mpy2.15mm_mpw1.5mm_mpl2.3mm",
+  )
+  expect(result.best!.copperIntersectionOverUnion).toBe(1)
+})
+
+test("renders the two-contact connector footprint", async () => {
+  const circuitJson = await renderFootprintToCircuitJson(Sm02bSurs)
+
+  expect(convertCircuitJsonToPcbSvg(circuitJson)).toMatchSvgSnapshot(
+    import.meta.path,
+    "jlcpcb-sm02b-surs",
+  )
+})
+
+test("recovers C41413182 four-pad LED with the same topology", async () => {
+  const result = await expectFootprintRecovery({
+    FootprintComponent: Xl3210Rgbc2812b,
+    sourceHints: ["C41413182 XL-3210RGBC-2812B SMD-4P 3.2x1mm LED"],
+  })
+
+  expect(result.best!.family).toBe("fpc")
+  expect(result.best!.footprinterString).toBe(
+    "fpc2_mounttop_p0.83mm_pw0.55mm_pl0.5mm_mpx3mm_mpy0.25mm_mpw1mm_mpl0.7mm",
+  )
+  expect(result.best!.copperIntersectionOverUnion).toBe(1)
 })
