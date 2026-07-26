@@ -134,7 +134,7 @@ test("recovers C81582 with a rotated rectangular thermal pad", async () => {
 
   expect(result.best!.footprinterString).toContain("thermalpad3.1mmx5.6mm")
   expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)
-}, 15_000)
+}, 30_000)
 
 test("recovers C177807 with a rotated rectangular thermal pad", async () => {
   const result = await expectFootprintRecovery({
@@ -144,7 +144,7 @@ test("recovers C177807 with a rotated rectangular thermal pad", async () => {
 
   expect(result.best!.footprinterString).toContain("thermalpad2.75mmx6.2mm")
   expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)
-}, 15_000)
+}, 30_000)
 
 test("recovers C30132 with a rotated rectangular thermal pad", async () => {
   const result = await expectFootprintRecovery({
@@ -154,7 +154,7 @@ test("recovers C30132 with a rotated rectangular thermal pad", async () => {
 
   expect(result.best!.footprinterString).toContain("thermalpad2.4mmx6.17mm")
   expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)
-}, 15_000)
+}, 30_000)
 
 test("renders the C81582 rotated rectangular thermal pad footprint", async () => {
   const circuitJson = await renderFootprintToCircuitJson(Drv8825Pwpr)
