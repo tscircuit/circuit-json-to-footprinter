@@ -6,7 +6,10 @@ import {
   formatLength,
   rotateFootprint,
 } from "../lib/discover-footprinter.js"
-import { circuitJsonToFootprinter, circuitJsonToPreview } from "../lib/index.js"
+import {
+  circuitJsonToFootprint,
+  circuitJsonToFootprinter,
+} from "../lib/index.js"
 
 const circuitJsonFromFootprinter = (footprinterString: string) =>
   fp.string(footprinterString).circuitJson()
@@ -17,7 +20,7 @@ const rotatedCircuitJsonFromFootprinter = (
   sourceHints: string[],
 ) => {
   return rotateFootprint(
-    circuitJsonToPreview(circuitJsonFromFootprinter(footprinterString), {
+    circuitJsonToFootprint(circuitJsonFromFootprinter(footprinterString), {
       sourceHints,
     }),
     rotation,

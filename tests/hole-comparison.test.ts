@@ -9,21 +9,21 @@ import type {
 } from "circuit-json"
 import { rotateFootprint } from "../lib/discover-footprinter.js"
 import {
-  circuitJsonToFootprinter,
-  circuitJsonToPreview,
-  footprinterStringToPreview,
-  summarizeCopperComparison,
-} from "../lib/index.js"
-import {
   getPcbPadGeometry,
   getTransformedPcbHoleGeometry,
-} from "../lib/preview-geometry.js"
+} from "../lib/footprint-geometry.js"
+import {
+  circuitJsonToFootprint,
+  circuitJsonToFootprinter,
+  footprinterStringToFootprint,
+  summarizeCopperComparison,
+} from "../lib/index.js"
 
 test("compares drill geometry independently from outer copper", () => {
-  const smallerHole = footprinterStringToPreview(
+  const smallerHole = footprinterStringToFootprint(
     "pinrow2_p2.54mm_id0.7mm_od1.6mm",
   )
-  const largerHole = footprinterStringToPreview(
+  const largerHole = footprinterStringToFootprint(
     "pinrow2_p2.54mm_id1.1mm_od1.6mm",
   )
 
@@ -43,7 +43,7 @@ test("compares drill geometry independently from outer copper", () => {
 })
 
 test("reports perfect hole IoU when neither footprint has holes", () => {
-  const smd = footprinterStringToPreview("0402")
+  const smd = footprinterStringToFootprint("0402")
 
   expect(summarizeCopperComparison(smd, smd)).toEqual({
     copperIntersectionOverUnion: 1,
@@ -52,7 +52,7 @@ test("reports perfect hole IoU when neither footprint has holes", () => {
 })
 
 test("preserves rectangular pads and offset rotated slots", () => {
-  const preview = circuitJsonToPreview([
+  const footprint = circuitJsonToFootprint([
     {
       hole_ccw_rotation: 90,
       hole_height: 0.6,
@@ -74,7 +74,7 @@ test("preserves rectangular pads and offset rotated slots", () => {
     },
   ])
 
-  expect(preview.pads[0]).toMatchObject({
+  expect(footprint.pads[0]).toMatchObject({
     hole_ccw_rotation: 90,
     hole_height: 0.6,
     hole_offset_x: 0.1,
@@ -90,7 +90,7 @@ test("preserves rectangular pads and offset rotated slots", () => {
     x: 4,
     y: 5,
   })
-  expect(getPcbPadGeometry(preview.pads[0]).copper).toMatchObject({
+  expect(getPcbPadGeometry(footprint.pads[0]).copper).toMatchObject({
     cornerRadius: 0.15,
     rotation: 15,
   })
@@ -180,10 +180,10 @@ test("preserves canonical Circuit JSON pad and hole types", () => {
     y: 0,
   }
 
-  const preview = circuitJsonToPreview([smtPad, platedHole, hole])
+  const footprint = circuitJsonToFootprint([smtPad, platedHole, hole])
 
-  expect(preview.pads).toEqual([smtPad, platedHole])
-  expect(preview.holes).toEqual([hole])
+  expect(footprint.pads).toEqual([smtPad, platedHole])
+  expect(footprint.holes).toEqual([hole])
 })
 
 test("compares non-plated PcbHole geometry", () => {
@@ -198,7 +198,7 @@ test("compares non-plated PcbHole geometry", () => {
     y: 0,
   }
   const withHole = (diameter: number) =>
-    circuitJsonToPreview([
+    circuitJsonToFootprint([
       smtPad,
       {
         hole_diameter: diameter,
@@ -227,7 +227,7 @@ test("rotates non-plated holes using their Circuit JSON shape types", () => {
     x: 0,
     y: 0,
   } satisfies PcbSmtPad
-  const preview = rotateFootprint(
+  const footprint = rotateFootprint(
     {
       holes: [
         {
@@ -255,8 +255,8 @@ test("rotates non-plated holes using their Circuit JSON shape types", () => {
     },
     90,
   )
-  const rect = getTransformedPcbHoleGeometry(preview.holes[0], preview)
-  const pill = getTransformedPcbHoleGeometry(preview.holes[1], preview)
+  const rect = getTransformedPcbHoleGeometry(footprint.holes[0], footprint)
+  const pill = getTransformedPcbHoleGeometry(footprint.holes[1], footprint)
 
   expect(rect).toMatchObject({
     height: 1,

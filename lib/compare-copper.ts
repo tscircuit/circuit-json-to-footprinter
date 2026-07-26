@@ -1,5 +1,5 @@
 import { getBoundsCenter, isPointInsidePolygon } from "@tscircuit/math-utils"
-import type { FootprintPreview } from "./circuit-json-preview.js"
+import type { CircuitJsonFootprint } from "./circuit-json-footprint.js"
 import {
   type Bounds,
   getShapeListBounds,
@@ -8,10 +8,10 @@ import {
   rotatePoint,
   type ShapeGeometry,
   toRadians,
-} from "./preview-geometry.js"
+} from "./footprint-geometry.js"
 
-export type { Bounds } from "./preview-geometry.js"
-export { getFootprintBounds } from "./preview-geometry.js"
+export type { Bounds } from "./footprint-geometry.js"
+export { getFootprintBounds } from "./footprint-geometry.js"
 
 const DEFAULT_GRID_SIZE = 320
 
@@ -26,8 +26,8 @@ export interface RasterComparison {
   gridSize: number
   iou: number
   leftOnlyRatio: number
-  normalizedLeft: FootprintPreview
-  normalizedRight: FootprintPreview
+  normalizedLeft: CircuitJsonFootprint
+  normalizedRight: CircuitJsonFootprint
   occupancy: Uint8Array
   padCountMatch: boolean
   rightOnlyRatio: number
@@ -57,10 +57,10 @@ const addPadding = (bounds: Bounds): Bounds => {
 }
 
 const translateFootprint = (
-  footprint: FootprintPreview,
+  footprint: CircuitJsonFootprint,
   deltaX: number,
   deltaY: number,
-): FootprintPreview => {
+): CircuitJsonFootprint => {
   return {
     holes: footprint.holes,
     pads: footprint.pads,
@@ -73,18 +73,20 @@ const translateFootprint = (
   }
 }
 
-const centerFootprint = (footprint: FootprintPreview): FootprintPreview => {
+const centerFootprint = (
+  footprint: CircuitJsonFootprint,
+): CircuitJsonFootprint => {
   const bounds = getShapeListBounds(getCopperShapes(footprint))
   const center = getBoundsCenter(bounds)
   return translateFootprint(footprint, -center.x, -center.y)
 }
 
-const getCopperShapes = (footprint: FootprintPreview): ShapeGeometry[] =>
+const getCopperShapes = (footprint: CircuitJsonFootprint): ShapeGeometry[] =>
   footprint.pads.map(
     (pad) => getTransformedPcbPadGeometry(pad, footprint).copper,
   )
 
-const getHoleShapes = (footprint: FootprintPreview): ShapeGeometry[] => [
+const getHoleShapes = (footprint: CircuitJsonFootprint): ShapeGeometry[] => [
   ...footprint.pads.flatMap((pad) => {
     const drill = getTransformedPcbPadGeometry(pad, footprint).drill
     return drill ? [drill] : []
@@ -103,7 +105,7 @@ const pointInShape = (x: number, y: number, shape: ShapeGeometry) => {
 
   if (shape.shape === "polygon") {
     if (!shape.points || shape.points.length < 3) {
-      throw new Error("Polygon preview shapes require at least three points")
+      throw new Error("Polygon footprint shapes require at least three points")
     }
     return isPointInsidePolygon(local, shape.points)
   }
@@ -254,8 +256,8 @@ const rasterizeShapes = (
 }
 
 const compareNormalizedFootprints = (
-  left: FootprintPreview,
-  right: FootprintPreview,
+  left: CircuitJsonFootprint,
+  right: CircuitJsonFootprint,
   gridSize: number,
   includeOccupancy: boolean,
 ) => {
@@ -272,8 +274,8 @@ const compareNormalizedFootprints = (
 }
 
 export const compareFootprints = (
-  left: FootprintPreview,
-  right: FootprintPreview,
+  left: CircuitJsonFootprint,
+  right: CircuitJsonFootprint,
   gridSize = DEFAULT_GRID_SIZE,
 ): RasterComparison => {
   const { comparison, normalizedLeft, normalizedRight } =
@@ -294,8 +296,8 @@ export const compareFootprints = (
 }
 
 export const summarizeCopperComparison = (
-  left: FootprintPreview,
-  right: FootprintPreview,
+  left: CircuitJsonFootprint,
+  right: CircuitJsonFootprint,
   gridSize = DEFAULT_GRID_SIZE,
 ): CopperComparisonSummary => {
   const { comparison, normalizedLeft, normalizedRight } =

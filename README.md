@@ -35,17 +35,17 @@ different from `pin1location(topside,left)`, which places pin 1 on the top edge 
 the left and cannot be produced from the RP2040 orientation by rotation alone. The
 input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
 
-The package also exports `circuitJsonToPreview`, `footprinterStringToPreview`,
+The package also exports `circuitJsonToFootprint`, `footprinterStringToFootprint`,
 `compareFootprints`, `summarizeCopperComparison`, and `getFootprintBounds` so
 applications can reuse the same shape parsing and comparison implementation as
 the discovery engine. Browser-only comparison code can import the lightweight
 `circuit-json-to-footprinter/compare` entry point without bundling the discovery
 engine or `@tscircuit/footprinter`.
 
-`FootprintPreview.pads` contains the original `PcbSmtPad | PcbPlatedHole`
-elements and `FootprintPreview.holes` contains the original `PcbHole` elements
+`CircuitJsonFootprint.pads` contains the original `PcbSmtPad | PcbPlatedHole`
+elements and `CircuitJsonFootprint.holes` contains the original `PcbHole` elements
 from [`circuit-json`](https://github.com/tscircuit/circuit-json). The converter
-does not expose a second, preview-specific pad or hole type.
+does not expose custom pad or hole types.
 
 ## Development
 

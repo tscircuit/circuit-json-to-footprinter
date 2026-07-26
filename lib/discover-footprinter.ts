@@ -1,8 +1,8 @@
 import { getFootprintNames, getFootprintSizes } from "@tscircuit/footprinter"
 import {
-  type FootprintPreview,
-  footprinterStringToPreview,
-} from "./circuit-json-preview.js"
+  type CircuitJsonFootprint,
+  footprinterStringToFootprint,
+} from "./circuit-json-footprint.js"
 import { summarizeCopperComparison } from "./compare-copper.js"
 import {
   type Bounds,
@@ -13,7 +13,7 @@ import {
   type PcbPadGeometry,
   rotatePoint,
   type ShapeGeometry,
-} from "./preview-geometry.js"
+} from "./footprint-geometry.js"
 
 const SEARCH_GRID_SIZE = 112
 const MAX_OPTIMIZED_SEEDS = 10
@@ -100,7 +100,7 @@ interface SeedCandidate {
   footprinterString: string
   geometryScore: number
   searchRotation: FootprintRotation
-  preview: FootprintPreview
+  footprint: CircuitJsonFootprint
 }
 
 export interface FootprinterDiscoveryCandidate {
@@ -115,7 +115,7 @@ export interface FootprinterDiscoveryCandidate {
 }
 
 interface RankedDiscoveryCandidate extends FootprinterDiscoveryCandidate {
-  preview: FootprintPreview
+  footprint: CircuitJsonFootprint
   searchRotation: FootprintRotation
 }
 
@@ -128,7 +128,7 @@ export interface FootprinterDiscoveryResult {
     targetPadCount: number
     topology: Topology
   }
-  target: FootprintPreview
+  target: CircuitJsonFootprint
 }
 
 const getOrientedHeuristics = (
@@ -186,14 +186,14 @@ const getPadBounds = (pad: ShapeGeometry): Bounds => getShapeListBounds([pad])
 
 const getBounds = (pads: ShapeGeometry[]): Bounds => getShapeListBounds(pads)
 
-const getPadGeometries = (preview: FootprintPreview) =>
-  preview.pads.map((pad) => getTransformedPcbPadGeometry(pad, preview))
+const getPadGeometries = (footprint: CircuitJsonFootprint) =>
+  footprint.pads.map((pad) => getTransformedPcbPadGeometry(pad, footprint))
 
-const getHoleGeometries = (preview: FootprintPreview) =>
-  preview.holes.map((hole) => getTransformedPcbHoleGeometry(hole, preview))
+const getHoleGeometries = (footprint: CircuitJsonFootprint) =>
+  footprint.holes.map((hole) => getTransformedPcbHoleGeometry(hole, footprint))
 
-const getCopperShapes = (preview: FootprintPreview) =>
-  getPadGeometries(preview).map(({ copper }) => copper)
+const getCopperShapes = (footprint: CircuitJsonFootprint) =>
+  getPadGeometries(footprint).map(({ copper }) => copper)
 
 const clusterCoordinates = (values: number[], tolerance: number) => {
   const sorted = [...values].sort((left, right) => left - right)
@@ -253,7 +253,7 @@ const getPitchEstimate = (pads: ShapeGeometry[], tolerance: number) => {
 }
 
 const analyzeFpcAxis = (
-  target: FootprintPreview,
+  target: CircuitJsonFootprint,
   alongAxis: "x" | "y",
 ): FpcAnalysis | undefined => {
   const acrossAxis = alongAxis === "x" ? "y" : "x"
@@ -416,7 +416,7 @@ const analyzeFpcAxis = (
   }
 }
 
-const analyzeFpc = (target: FootprintPreview) =>
+const analyzeFpc = (target: CircuitJsonFootprint) =>
   analyzeFpcAxis(target, "x") ?? analyzeFpcAxis(target, "y")
 
 interface LatticeAxisFit {
@@ -476,7 +476,7 @@ const fitLatticeAxis = (
 }
 
 const analyzeSparsePinGrid = (
-  target: FootprintPreview,
+  target: CircuitJsonFootprint,
   clusterTolerance: number,
   medianPadShortSide: number,
 ): SparsePinGridAnalysis | undefined => {
@@ -555,7 +555,7 @@ const analyzeSparsePinGrid = (
   }
 }
 
-const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
+const analyzeTarget = (target: CircuitJsonFootprint): TargetAnalysis => {
   const pads = getCopperShapes(target)
   const bounds = getBounds(pads)
   const padBounds = pads.map(getPadBounds)
@@ -766,9 +766,9 @@ const normalizePads = (pads: PcbPadGeometry[]) => {
 }
 
 export const rotateFootprint = (
-  footprint: FootprintPreview,
+  footprint: CircuitJsonFootprint,
   rotation: FootprintRotation,
-): FootprintPreview => {
+): CircuitJsonFootprint => {
   if (rotation === 0) return footprint
   const offset = rotatePoint(
     footprint.x ?? 0,
@@ -827,8 +827,8 @@ const getPortHints = ({ element }: PcbPadGeometry) =>
   (element.port_hints ?? []).map(normalizePortHint)
 
 const getGeometryLoss = (
-  candidate: FootprintPreview,
-  target: FootprintPreview,
+  candidate: CircuitJsonFootprint,
+  target: CircuitJsonFootprint,
 ) => {
   if (candidate.pads.length !== target.pads.length) return 1_000
 
@@ -897,11 +897,11 @@ const getGeometryLoss = (
 }
 
 const getGeometryScore = (
-  candidate: FootprintPreview,
-  target: FootprintPreview,
+  candidate: CircuitJsonFootprint,
+  target: CircuitJsonFootprint,
 ) => 1 / (1 + getGeometryLoss(candidate, target))
 
-const getDomainScore = (target: FootprintPreview, family: string) => {
+const getDomainScore = (target: CircuitJsonFootprint, family: string) => {
   const description = `${target.title} ${target.subtitle} ${
     target.sourceHints?.join(" ") ?? ""
   }`.toLowerCase()
@@ -938,7 +938,7 @@ const getFamily = (footprinterString: string) => {
 
 const tryBuild = (footprinterString: string) => {
   try {
-    return footprinterStringToPreview(footprinterString)
+    return footprinterStringToFootprint(footprinterString)
   } catch {
     return null
   }
@@ -966,8 +966,8 @@ const buildParameterizedString = (
   return suffix ? `${seed}_${suffix}` : seed
 }
 
-const geometrySignature = (preview: FootprintPreview) => {
-  const padSignature = getPadGeometries(preview)
+const geometrySignature = (footprint: CircuitJsonFootprint) => {
+  const padSignature = getPadGeometries(footprint)
     .map(({ copper, drill, element }) => {
       const holeSignature = drill
         ? [
@@ -998,7 +998,7 @@ const geometrySignature = (preview: FootprintPreview) => {
         .join(":")
     })
     .join("|")
-  const holeSignature = getHoleGeometries(preview)
+  const holeSignature = getHoleGeometries(footprint)
     .map((hole) =>
       [hole.shape, hole.x, hole.y, hole.width, hole.height, hole.rotation].join(
         ":",
@@ -1008,8 +1008,8 @@ const geometrySignature = (preview: FootprintPreview) => {
   return `${padSignature}#${holeSignature}`
 }
 
-const padShapeSignature = (preview: FootprintPreview) =>
-  getPadGeometries(preview)
+const padShapeSignature = (footprint: CircuitJsonFootprint) =>
+  getPadGeometries(footprint)
     .map(({ copper, element }) => `${element.type}:${copper.shape}`)
     .toSorted()
     .join("|")
@@ -1045,8 +1045,8 @@ const haveSamePolygon = (left: ShapeGeometry, right: ShapeGeometry) => {
 }
 
 const haveSamePadPlacement = (
-  left: FootprintPreview,
-  right: FootprintPreview,
+  left: CircuitJsonFootprint,
+  right: CircuitJsonFootprint,
 ) => {
   if (
     left.pads.length !== right.pads.length ||
@@ -1119,14 +1119,14 @@ const haveSamePadPlacement = (
 const encodeOrientationInFootprinterString = (
   footprinterString: string,
   searchRotation: FootprintRotation,
-  orientedPreview: FootprintPreview,
+  orientedFootprint: CircuitJsonFootprint,
 ) => {
   if (searchRotation === 0) return footprinterString
 
   for (const [side, alignment] of PIN1_LOCATIONS) {
     const orientedString = `${footprinterString}_pin1location(${side},${alignment})`
-    const preview = tryBuild(orientedString)
-    if (preview && haveSamePadPlacement(preview, orientedPreview)) {
+    const footprint = tryBuild(orientedString)
+    if (footprint && haveSamePadPlacement(footprint, orientedFootprint)) {
       return orientedString
     }
   }
@@ -1172,7 +1172,10 @@ const getPreferredFamilies = (analysis: TargetAnalysis) => {
   return new Set<string>()
 }
 
-const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
+const generateSeeds = (
+  target: CircuitJsonFootprint,
+  analysis: TargetAnalysis,
+) => {
   const padCount = target.pads.length
   const seeds = new Set<string>()
 
@@ -1331,10 +1334,10 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
   if (getCopperShapes(target).some((pad) => pad.shape === "pill")) {
     for (const seed of [...seeds]) {
       const pillPadSeed = `${seed}_pillpads`
-      const preview = tryBuild(pillPadSeed)
+      const footprint = tryBuild(pillPadSeed)
       if (
-        preview?.pads.length === padCount &&
-        getCopperShapes(preview).some((pad) => pad.shape === "pill")
+        footprint?.pads.length === padCount &&
+        getCopperShapes(footprint).some((pad) => pad.shape === "pill")
       ) {
         seeds.add(pillPadSeed)
       }
@@ -1347,7 +1350,7 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
 const selectSeedsToOptimize = (
   candidates: SeedCandidate[],
   analysis: TargetAnalysis,
-  target: FootprintPreview,
+  target: CircuitJsonFootprint,
 ) => {
   const selected = new Map<string, SeedCandidate>()
   const targetPadShapeSignature = padShapeSignature(target)
@@ -1371,7 +1374,7 @@ const selectSeedsToOptimize = (
       if (
         selectedThermalPadFamilies.has(candidate.family) ||
         !candidate.footprinterString.includes(orientedThermalPadParameter) ||
-        padShapeSignature(candidate.preview) !== targetPadShapeSignature
+        padShapeSignature(candidate.footprint) !== targetPadShapeSignature
       ) {
         continue
       }
@@ -1400,7 +1403,7 @@ const selectSeedsToOptimize = (
 
   if (getCopperShapes(target).some((pad) => pad.shape === "pill")) {
     for (const candidate of candidates) {
-      if (padShapeSignature(candidate.preview) !== targetPadShapeSignature) {
+      if (padShapeSignature(candidate.footprint) !== targetPadShapeSignature) {
         continue
       }
       if (selectedShapeFamilies.has(candidate.family)) continue
@@ -1471,23 +1474,23 @@ const findActiveParameters = (
   if (seed.family === "fpc") return []
 
   const active: NumericParameter[] = []
-  const baseSignature = geometrySignature(seed.preview)
+  const baseSignature = geometrySignature(seed.footprint)
   const heuristics = getOrientedHeuristics(seed, analysis)
 
   for (const parameter of NUMERIC_PARAMETERS) {
     const heuristic = Math.max(heuristics[parameter], 0.05)
-    const preview = tryBuild(
+    const footprint = tryBuild(
       buildParameterizedString(seed.footprinterString, {
         [parameter]: heuristic,
       }),
     )
-    const orientedPreview = preview
-      ? rotateFootprint(preview, seed.searchRotation)
+    const orientedFootprint = footprint
+      ? rotateFootprint(footprint, seed.searchRotation)
       : null
     if (
-      orientedPreview &&
-      orientedPreview.pads.length === seed.preview.pads.length &&
-      geometrySignature(orientedPreview) !== baseSignature
+      orientedFootprint &&
+      orientedFootprint.pads.length === seed.footprint.pads.length &&
+      geometrySignature(orientedFootprint) !== baseSignature
     ) {
       active.push(parameter)
     }
@@ -1498,7 +1501,7 @@ const findActiveParameters = (
 
 const optimizeSeed = (
   seed: SeedCandidate,
-  target: FootprintPreview,
+  target: CircuitJsonFootprint,
   analysis: TargetAnalysis,
 ) => {
   const activeParameters = findActiveParameters(seed, analysis)
@@ -1520,17 +1523,17 @@ const optimizeSeed = (
       seed.footprinterString,
       parameters,
     )
-    const unrotatedPreview = tryBuild(footprinterString)
-    if (!unrotatedPreview) return null
-    const preview = rotateFootprint(unrotatedPreview, seed.searchRotation)
-    if (preview.pads.length !== target.pads.length) {
+    const unrotatedFootprint = tryBuild(footprinterString)
+    if (!unrotatedFootprint) return null
+    const footprint = rotateFootprint(unrotatedFootprint, seed.searchRotation)
+    if (footprint.pads.length !== target.pads.length) {
       return null
     }
     return {
       footprinterString,
-      loss: getGeometryLoss(preview, target),
+      loss: getGeometryLoss(footprint, target),
       parameters: { ...parameters },
-      preview,
+      footprint,
     }
   }
 
@@ -1601,19 +1604,19 @@ const optimizeSeed = (
       roundToTenMicrometers(value),
     ]),
   ) as Partial<Record<NumericParameter, number>>
-  const bestSignature = geometrySignature(best.preview)
+  const bestSignature = geometrySignature(best.footprint)
   for (const parameter of activeParameters) {
     const withoutParameter = { ...simplifiedParameters }
     delete withoutParameter[parameter]
-    const simplifiedPreview = tryBuild(
+    const simplifiedFootprint = tryBuild(
       buildParameterizedString(seed.footprinterString, withoutParameter),
     )
-    const orientedSimplifiedPreview = simplifiedPreview
-      ? rotateFootprint(simplifiedPreview, seed.searchRotation)
+    const orientedSimplifiedFootprint = simplifiedFootprint
+      ? rotateFootprint(simplifiedFootprint, seed.searchRotation)
       : null
     if (
-      orientedSimplifiedPreview &&
-      geometrySignature(orientedSimplifiedPreview) === bestSignature
+      orientedSimplifiedFootprint &&
+      geometrySignature(orientedSimplifiedFootprint) === bestSignature
     ) {
       delete simplifiedParameters[parameter]
     }
@@ -1622,10 +1625,10 @@ const optimizeSeed = (
     seed.footprinterString,
     simplifiedParameters,
   )
-  const unrotatedSimplifiedPreview = tryBuild(simplifiedString)
-  const simplifiedPreview = unrotatedSimplifiedPreview
-    ? rotateFootprint(unrotatedSimplifiedPreview, seed.searchRotation)
-    : best.preview
+  const unrotatedSimplifiedFootprint = tryBuild(simplifiedString)
+  const simplifiedFootprint = unrotatedSimplifiedFootprint
+    ? rotateFootprint(unrotatedSimplifiedFootprint, seed.searchRotation)
+    : best.footprint
 
   return {
     family: seed.family,
@@ -1633,28 +1636,28 @@ const optimizeSeed = (
     geometryScore: 1 / (1 + best.loss),
     optimizedParameters: simplifiedParameters,
     searchRotation: seed.searchRotation,
-    preview: simplifiedPreview,
+    footprint: simplifiedFootprint,
   }
 }
 
 export const discoverFootprinterString = (
-  target: FootprintPreview,
+  target: CircuitJsonFootprint,
   maxCandidates = 5,
 ): FootprinterDiscoveryResult => {
   const analysis = analyzeTarget(target)
   const rawSeeds = generateSeeds(target, analysis)
   const seedCandidates = rawSeeds.flatMap((footprinterString) => {
-    const unrotatedPreview = tryBuild(footprinterString)
+    const unrotatedFootprint = tryBuild(footprinterString)
     if (
-      !unrotatedPreview ||
-      unrotatedPreview.pads.length !== target.pads.length
+      !unrotatedFootprint ||
+      unrotatedFootprint.pads.length !== target.pads.length
     ) {
       return []
     }
 
     return FOOTPRINT_ROTATIONS.flatMap((searchRotation): SeedCandidate[] => {
-      const preview = rotateFootprint(unrotatedPreview, searchRotation)
-      const platedHoleCount = preview.pads.filter(
+      const footprint = rotateFootprint(unrotatedFootprint, searchRotation)
+      const platedHoleCount = footprint.pads.filter(
         (pad) => pad.type === "pcb_plated_hole",
       ).length
       if (platedHoleCount !== analysis.platedHoleCount) return []
@@ -1663,8 +1666,8 @@ export const discoverFootprinterString = (
         {
           family: getFamily(footprinterString),
           footprinterString,
-          geometryScore: getGeometryScore(preview, target),
-          preview,
+          geometryScore: getGeometryScore(footprint, target),
+          footprint,
           searchRotation,
         },
       ]
@@ -1683,7 +1686,7 @@ export const discoverFootprinterString = (
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): RankedDiscoveryCandidate => {
       const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
-        summarizeCopperComparison(candidate.preview, target, SEARCH_GRID_SIZE)
+        summarizeCopperComparison(candidate.footprint, target, SEARCH_GRID_SIZE)
       const domainScore = getDomainScore(target, candidate.family)
       return {
         copperIntersectionOverUnion,
@@ -1698,7 +1701,7 @@ export const discoverFootprinterString = (
                 Record<NumericParameter, number>
               >)
             : {},
-        preview: candidate.preview,
+        footprint: candidate.footprint,
         // Package-name hints disambiguate equivalent geometry through the
         // domainScore sort tie-breaker below. They must not outrank a candidate
         // with better copper overlap.
@@ -1724,12 +1727,12 @@ export const discoverFootprinterString = (
     const orientedString = encodeOrientationInFootprinterString(
       candidate.footprinterString,
       candidate.searchRotation,
-      candidate.preview,
+      candidate.footprint,
     )
     if (!orientedString || seenStrings.has(orientedString)) continue
     seenStrings.add(orientedString)
     const {
-      preview: _preview,
+      footprint: _footprint,
       searchRotation: _searchRotation,
       ...publicData
     } = candidate

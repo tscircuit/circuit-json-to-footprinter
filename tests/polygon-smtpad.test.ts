@@ -3,8 +3,8 @@ import { fp } from "@tscircuit/footprinter"
 import type { AnyCircuitElement } from "circuit-json"
 import { convertCircuitJsonToPcbSvg } from "circuit-to-svg"
 import {
+  circuitJsonToFootprint,
   circuitJsonToFootprinter,
-  circuitJsonToPreview,
   getFootprintBounds,
   summarizeCopperComparison,
 } from "../lib/index.js"
@@ -22,7 +22,7 @@ const polygonPad = (
   }) as AnyCircuitElement
 
 test("preserves polygon SMT pad vertices and bounds", () => {
-  const preview = circuitJsonToPreview([
+  const footprint = circuitJsonToFootprint([
     polygonPad([
       { x: 4, y: 5 },
       { x: 8, y: 5 },
@@ -32,7 +32,7 @@ test("preserves polygon SMT pad vertices and bounds", () => {
     ]),
   ])
 
-  expect(preview.pads[0]).toEqual({
+  expect(footprint.pads[0]).toEqual({
     layer: "top",
     points: [
       { x: 4, y: 5 },
@@ -46,7 +46,7 @@ test("preserves polygon SMT pad vertices and bounds", () => {
     shape: "polygon",
     type: "pcb_smtpad",
   })
-  expect(getFootprintBounds(preview.pads)).toEqual({
+  expect(getFootprintBounds(footprint.pads)).toEqual({
     height: 2,
     maxX: 8,
     maxY: 7,
@@ -57,7 +57,7 @@ test("preserves polygon SMT pad vertices and bounds", () => {
 })
 
 test("rasterizes polygon copper instead of its bounding rectangle", () => {
-  const square = circuitJsonToPreview([
+  const square = circuitJsonToFootprint([
     polygonPad([
       { x: -1, y: -1 },
       { x: 1, y: -1 },
@@ -65,14 +65,14 @@ test("rasterizes polygon copper instead of its bounding rectangle", () => {
       { x: -1, y: 1 },
     ]),
   ])
-  const triangle = circuitJsonToPreview([
+  const triangle = circuitJsonToFootprint([
     polygonPad([
       { x: -1, y: -1 },
       { x: 1, y: -1 },
       { x: 0, y: 1 },
     ]),
   ])
-  const equivalentRect = circuitJsonToPreview([
+  const equivalentRect = circuitJsonToFootprint([
     {
       height: 2,
       layer: "top",
@@ -101,8 +101,8 @@ test("rasterizes polygon copper instead of its bounding rectangle", () => {
 
 test("recovers the Footprinter SOT-89 family with its polygon pad", () => {
   const circuitJson = fp.string("sot89").circuitJson() as AnyCircuitElement[]
-  const preview = circuitJsonToPreview(circuitJson)
-  const polygon = preview.pads.find((pad) => pad.shape === "polygon")
+  const footprint = circuitJsonToFootprint(circuitJson)
+  const polygon = footprint.pads.find((pad) => pad.shape === "polygon")
 
   expect(polygon?.points).toHaveLength(8)
   expect(polygon && getFootprintBounds([polygon]).width).toBeCloseTo(4.6)
@@ -124,7 +124,7 @@ test("renders the SOT-89 polygon SMT pad", () => {
 
 test("rejects malformed polygon SMT pads", () => {
   expect(() =>
-    circuitJsonToPreview([
+    circuitJsonToFootprint([
       polygonPad([
         { x: 0, y: 0 },
         { x: 1, y: 0 },
@@ -133,7 +133,7 @@ test("rejects malformed polygon SMT pads", () => {
   ).toThrow("at least three points")
 
   expect(() =>
-    circuitJsonToPreview([
+    circuitJsonToFootprint([
       polygonPad([
         { x: 0, y: 0 },
         { x: 1, y: 0 },
