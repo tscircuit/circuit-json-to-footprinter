@@ -1269,6 +1269,36 @@ const selectSeedsToOptimize = (
   const targetPadShapeSignature = padShapeSignature(target)
   const selectedShapeFamilies = new Set<string>()
 
+  if (analysis.thermalPad) {
+    const selectedThermalPadFamilies = new Set<string>()
+    for (const candidate of candidates) {
+      const isQuarterTurn =
+        candidate.searchRotation === 90 || candidate.searchRotation === 270
+      const sourceWidth = isQuarterTurn
+        ? analysis.thermalPad.height
+        : analysis.thermalPad.width
+      const sourceHeight = isQuarterTurn
+        ? analysis.thermalPad.width
+        : analysis.thermalPad.height
+      const orientedThermalPadParameter = `_thermalpad${formatLength(
+        sourceWidth,
+      )}x${formatLength(sourceHeight)}`
+
+      if (
+        selectedThermalPadFamilies.has(candidate.family) ||
+        !candidate.footprinterString.includes(orientedThermalPadParameter) ||
+        padShapeSignature(candidate.preview) !== targetPadShapeSignature
+      ) {
+        continue
+      }
+      selectedThermalPadFamilies.add(candidate.family)
+      selected.set(
+        `${candidate.footprinterString}:${candidate.searchRotation}`,
+        candidate,
+      )
+    }
+  }
+
   if (analysis.topology === "four-sided" || analysis.topology === "two-sided") {
     const lgaGridCandidate = candidates.find(
       (candidate) =>
@@ -1566,14 +1596,11 @@ export const discoverFootprinterString = (
   const optimized = selectedSeeds.map((seed) =>
     optimizeSeed(seed, target, analysis),
   )
-  const targetPadShapeSignature = padShapeSignature(target)
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): RankedDiscoveryCandidate => {
       const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
         summarizeCopperComparison(candidate.preview, target, SEARCH_GRID_SIZE)
       const domainScore = getDomainScore(target, candidate.family)
-      const shapesMatch =
-        padShapeSignature(candidate.preview) === targetPadShapeSignature
       return {
         copperIntersectionOverUnion,
         domainScore,
@@ -1588,12 +1615,11 @@ export const discoverFootprinterString = (
               >)
             : {},
         preview: candidate.preview,
-        // Package-name hints can disambiguate equivalent geometry, but should
-        // not outrank a shape-exact candidate.
+        // Package-name hints disambiguate equivalent geometry through the
+        // domainScore sort tie-breaker below. They must not outrank a candidate
+        // with better copper overlap.
         rankingScore:
-          copperIntersectionOverUnion +
-          (holeIntersectionOverUnion - 1) * 0.12 +
-          domainScore * (shapesMatch ? 0.08 : 0.01),
+          copperIntersectionOverUnion + (holeIntersectionOverUnion - 1) * 0.12,
         searchRotation: candidate.searchRotation,
       }
     })
