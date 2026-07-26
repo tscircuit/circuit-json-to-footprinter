@@ -59,6 +59,7 @@ interface TargetAnalysis {
   perimeterPadCount: number
   platedHoleCount: number
   sparsePinGrid?: SparsePinGridAnalysis
+  usbCMidMount?: UsbCMidMountAnalysis
   thermalPad?: {
     height: number
     width: number
@@ -90,6 +91,27 @@ interface FpcAnalysis {
   rowPitch: number
   staggered: boolean
   topPadLength: number
+}
+
+interface UsbCMidMountAnalysis {
+  bottomHoleHeight: number
+  bottomHoleWidth: number
+  bottomRing: number
+  bottomY: number
+  holeDiameter?: number
+  holeX?: number
+  holeY?: number
+  noHoles: boolean
+  powerPadWidth: number
+  powerX: number
+  rowY: number
+  shellX: number
+  signalPadHeight: number
+  signalPadWidth: number
+  topHoleHeight: number
+  topHoleWidth: number
+  topRing: number
+  topY: number
 }
 
 interface SeedCandidate {
@@ -552,6 +574,149 @@ const analyzeSparsePinGrid = (
   }
 }
 
+const getUsbCMidMountGeometry = (
+  target: Footprint,
+): UsbCMidMountAnalysis | undefined => {
+  const pads = getPadGeometries(target)
+  const shellTabs = pads.filter(
+    ({ copper, drill, element }) =>
+      element.type === "pcb_plated_hole" &&
+      copper.shape === "pill" &&
+      drill?.shape === "pill",
+  )
+  const contacts = pads.filter(({ element }) => element.type === "pcb_smtpad")
+
+  // The existing usbcmidmount16 footprint has four plated shell slots and
+  // twelve SMT contacts. Require that complete topology before extracting its
+  // parameters so unrelated connectors continue through generic discovery.
+  if (
+    target.pads.length !== 16 ||
+    shellTabs.length !== 4 ||
+    contacts.length !== 12
+  ) {
+    return undefined
+  }
+
+  const topTabs = shellTabs.filter(({ copper }) => copper.y > 0)
+  const bottomTabs = shellTabs.filter(({ copper }) => copper.y < 0)
+  if (topTabs.length !== 2 || bottomTabs.length !== 2) return undefined
+
+  const shellX = median(shellTabs.map(({ copper }) => Math.abs(copper.x)))
+  const shellTolerance = Math.max(0.04, shellX * 0.015)
+  const hasMirroredShellPair = (tabs: PcbPadGeometry[]) => {
+    const xs = tabs.map(({ copper }) => copper.x)
+    return (
+      xs.some((x) => x > 0) &&
+      xs.some((x) => x < 0) &&
+      tabs.every(
+        ({ copper }) => Math.abs(Math.abs(copper.x) - shellX) <= shellTolerance,
+      )
+    )
+  }
+  if (!hasMirroredShellPair(topTabs) || !hasMirroredShellPair(bottomTabs)) {
+    return undefined
+  }
+
+  const contactEntries = contacts.map((pad) => ({
+    bounds: getPadBounds(pad.copper),
+    pad,
+  }))
+  const rowY = median(contactEntries.map(({ pad }) => pad.copper.y))
+  if (
+    Math.abs(rowY) < 0.05 ||
+    contactEntries.some(({ pad }) => Math.abs(pad.copper.y - rowY) > 0.04)
+  ) {
+    return undefined
+  }
+
+  const contactsByWidth = [...contactEntries].sort(
+    (left, right) => right.bounds.width - left.bounds.width,
+  )
+  const powerContacts = contactsByWidth.slice(0, 4)
+  const signalContacts = contactsByWidth.slice(4)
+  const powerPadWidth = median(powerContacts.map(({ bounds }) => bounds.width))
+  const signalPadWidth = median(
+    signalContacts.map(({ bounds }) => bounds.width),
+  )
+  const signalPadHeight = median(
+    signalContacts.map(({ bounds }) => bounds.height),
+  )
+  if (powerPadWidth <= signalPadWidth * 1.5) return undefined
+
+  const powerX = Math.max(
+    ...powerContacts.map(({ pad }) => Math.abs(pad.copper.x)),
+  )
+  const expectedInnerPowerX = powerX - 0.8
+  if (
+    !powerContacts.some(
+      ({ pad }) =>
+        Math.abs(Math.abs(pad.copper.x) - expectedInnerPowerX) <= 0.06,
+    ) ||
+    signalContacts.some(
+      ({ pad }) => Math.abs(pad.copper.x) >= expectedInnerPowerX - 0.06,
+    )
+  ) {
+    return undefined
+  }
+
+  const getTabDimensions = (tabs: PcbPadGeometry[]) => ({
+    height: median(tabs.map(({ drill }) => drill?.height ?? 0)),
+    ring: median(
+      tabs.map(({ copper, drill }) =>
+        drill ? (copper.width - drill.width) / 2 : 0,
+      ),
+    ),
+    width: median(tabs.map(({ drill }) => drill?.width ?? 0)),
+    y: median(tabs.map(({ copper }) => Math.abs(copper.y))),
+  })
+  const top = getTabDimensions(topTabs)
+  const bottom = getTabDimensions(bottomTabs)
+
+  const locatorHoles = getHoleGeometries(target)
+  if (locatorHoles.length !== 0 && locatorHoles.length !== 2) return undefined
+  if (
+    locatorHoles.length === 2 &&
+    (locatorHoles.some((hole) => hole.shape !== "circle") ||
+      Math.abs(locatorHoles[0].y - locatorHoles[1].y) > 0.04 ||
+      Math.abs(Math.abs(locatorHoles[0].x) - Math.abs(locatorHoles[1].x)) >
+        0.04 ||
+      !locatorHoles.some((hole) => hole.x > 0) ||
+      !locatorHoles.some((hole) => hole.x < 0))
+  ) {
+    return undefined
+  }
+
+  return {
+    bottomHoleHeight: bottom.height,
+    bottomHoleWidth: bottom.width,
+    bottomRing: bottom.ring,
+    bottomY: bottom.y,
+    holeDiameter:
+      locatorHoles.length === 2
+        ? median(locatorHoles.map((hole) => hole.width))
+        : undefined,
+    holeX:
+      locatorHoles.length === 2
+        ? median(locatorHoles.map((hole) => Math.abs(hole.x)))
+        : undefined,
+    holeY:
+      locatorHoles.length === 2
+        ? median(locatorHoles.map((hole) => hole.y))
+        : undefined,
+    noHoles: locatorHoles.length === 0,
+    powerPadWidth,
+    powerX,
+    rowY,
+    shellX,
+    signalPadHeight,
+    signalPadWidth,
+    topHoleHeight: top.height,
+    topHoleWidth: top.width,
+    topRing: top.ring,
+    topY: top.y,
+  }
+}
+
 const analyzeTarget = (target: Footprint): TargetAnalysis => {
   const pads = getCopperShapes(target)
   const bounds = getBounds(pads)
@@ -737,6 +902,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
         }
       : undefined,
     topology,
+    usbCMidMount: getUsbCMidMountGeometry(target),
     verticalSidePadCount: Math.max(bottomSidePadCount, topSidePadCount),
   }
 }
@@ -946,6 +1112,8 @@ export const formatLength = (value: number) => {
   }
   return `${millimeters}mm`
 }
+
+const formatPreciseLength = (value: number) => `${Number(value.toFixed(4))}mm`
 
 const buildParameterizedString = (
   seed: string,
@@ -1169,6 +1337,56 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     seeds.add(`${family}${padCount}`)
     // Mid-mount USB-C variants are named by their explicit 16-pin form.
     if (family !== "usbcmidmount") seeds.add(family)
+  }
+
+  if (analysis.usbCMidMount && !analysis.usbCMidMount.noHoles) {
+    const {
+      bottomHoleHeight,
+      bottomHoleWidth,
+      bottomRing,
+      bottomY,
+      holeDiameter,
+      holeX,
+      holeY,
+      powerPadWidth,
+      powerX,
+      rowY,
+      shellX,
+      signalPadHeight,
+      signalPadWidth,
+      topHoleHeight,
+      topHoleWidth,
+      topRing,
+      topY,
+    } = analysis.usbCMidMount
+    const parameters = [
+      `tophw${formatPreciseLength(topHoleWidth)}`,
+      `bottomhw${formatPreciseLength(bottomHoleWidth)}`,
+      `tophh${formatPreciseLength(topHoleHeight)}`,
+      `bottomhh${formatPreciseLength(bottomHoleHeight)}`,
+      `topring${formatPreciseLength(topRing)}`,
+      `bottomring${formatPreciseLength(bottomRing)}`,
+      `rowy${formatPreciseLength(rowY)}`,
+      `ph${formatPreciseLength(signalPadHeight)}`,
+      `pw${formatPreciseLength(signalPadWidth)}`,
+      `powerpw${formatPreciseLength(powerPadWidth)}`,
+      `powerx${formatPreciseLength(powerX)}`,
+      `shellx${formatPreciseLength(shellX)}`,
+      `topy${formatPreciseLength(topY)}`,
+      `bottomy${formatPreciseLength(bottomY)}`,
+    ]
+    if (
+      holeDiameter !== undefined &&
+      holeX !== undefined &&
+      holeY !== undefined
+    ) {
+      parameters.push(
+        `holex${formatPreciseLength(holeX)}`,
+        `holey${formatPreciseLength(holeY)}`,
+        `holed${formatPreciseLength(holeDiameter)}`,
+      )
+    }
+    seeds.add(`usbcmidmount16_${parameters.join("_")}`)
   }
 
   if (

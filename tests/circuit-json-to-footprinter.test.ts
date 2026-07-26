@@ -66,6 +66,23 @@ test("preserves pill-shaped pads for quad footprints", () => {
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
 }, 15_000)
 
+test("infers USB-C mid-mount shell slots and locator holes", () => {
+  const source =
+    "usbcmidmount16_tophw0.8mm_bottomhw0.8mm_tophh1.6mm_bottomhh1.4mm_topring0.2mm_bottomring0.2mm_rowy2.174mm_ph1.3mm_pw0.3mm_powerpw0.6mm_powerx3.2mm_shellx4.3251mm_topy1.4057mm_bottomy2.7741mm_holex2.8999mm_holey0.9056mm_holed0.75mm"
+  const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
+    maxCandidates: 3,
+    sourceHints: ["TYPE-C-31-M-12"],
+  })
+
+  expect(result.best?.family).toBe("usbcmidmount")
+  expect(result.best?.footprinterString).toContain("tophw0.8mm")
+  expect(result.best?.footprinterString).toContain("bottomhw0.8mm")
+  expect(result.best?.footprinterString).toContain("tophh1.6mm")
+  expect(result.best?.footprinterString).toContain("bottomhh1.4mm")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+  expect(result.best?.holeIntersectionOverUnion).toBeGreaterThan(0.99)
+}, 15_000)
+
 test("infers unequal LGA side counts and continuous dimensions", () => {
   const source = "lga14_grid4x3_p0.5mm_w3.2mm_h2.7mm_pw0.28mm_pl0.675mm"
   const result = circuitJsonToFootprinter(circuitJsonFromFootprinter(source), {
