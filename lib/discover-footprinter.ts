@@ -6,6 +6,7 @@ import {
 import { summarizeCopperComparison } from "./compare-copper.js"
 import {
   type Bounds,
+  getPolygonWorldPoints,
   getShapeListBounds,
   getTransformedPcbHoleGeometry,
   getTransformedPcbPadGeometry,
@@ -51,6 +52,7 @@ const PIN1_LOCATIONS: Pin1Location[] = [
 
 interface TargetAnalysis {
   bounds: Bounds
+  fpc?: FpcAnalysis
   gridColumns: number
   gridRows: number
   heuristics: Record<NumericParameter, number>
@@ -59,12 +61,38 @@ interface TargetAnalysis {
   lgaPadWidth: number
   perimeterPadCount: number
   platedHoleCount: number
+  sparsePinGrid?: SparsePinGridAnalysis
   thermalPad?: {
     height: number
     width: number
   }
   topology: Topology
   verticalSidePadCount: number
+}
+
+interface SparsePinGridAnalysis {
+  columns: number
+  missingPositions: number[]
+  pitchX: number
+  pitchY: number
+  rows: number
+}
+
+interface FpcAnalysis {
+  bottomPadLength: number
+  mountingPadLength: number
+  mountingPadPitch: number
+  mountingPadRowDistance: number
+  mountingPadWidth: number
+  mountingPadsOnTop: boolean
+  padLength: number
+  padPitch: number
+  padWidth: number
+  pinCount: number
+  reverse: boolean
+  rowPitch: number
+  staggered: boolean
+  topPadLength: number
 }
 
 interface SeedCandidate {
@@ -107,6 +135,20 @@ const getOrientedHeuristics = (
   seed: SeedCandidate,
   analysis: TargetAnalysis,
 ): Record<NumericParameter, number> => {
+  if (seed.family === "dip") {
+    const isQuarterTurn =
+      seed.searchRotation === 90 || seed.searchRotation === 270
+    const orientedOuterSpan = isQuarterTurn
+      ? analysis.bounds.height
+      : analysis.bounds.width
+    return {
+      ...analysis.heuristics,
+      // DIP w is the distance between pad centers, while the target bounds
+      // include the outer copper diameter on both edges.
+      w: Math.max(orientedOuterSpan - analysis.heuristics.od, 0.05),
+    }
+  }
+
   const heuristics =
     seed.family === "lga"
       ? {
@@ -208,6 +250,309 @@ const getPitchEstimate = (pads: ShapeGeometry[], tolerance: number) => {
   // pull the pitch estimate away from the repeated lead spacing.
   const sortedDifferences = differences.toSorted((left, right) => left - right)
   return sortedDifferences[Math.floor((sortedDifferences.length - 1) * 0.25)]
+}
+
+const analyzeFpcAxis = (
+  target: FootprintPreview,
+  alongAxis: "x" | "y",
+): FpcAnalysis | undefined => {
+  const acrossAxis = alongAxis === "x" ? "y" : "x"
+  const pads = getPadGeometries(target)
+  if (
+    pads.length < 4 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" ||
+        drill ||
+        (copper.shape !== "rect" && copper.shape !== "pill"),
+    )
+  ) {
+    return undefined
+  }
+
+  const entries = pads.map((pad) => {
+    const bounds = getPadBounds(pad.copper)
+    const alongSize = alongAxis === "x" ? bounds.width : bounds.height
+    const acrossSize = alongAxis === "x" ? bounds.height : bounds.width
+    return {
+      across: pad.copper[acrossAxis],
+      acrossSize,
+      along: pad.copper[alongAxis],
+      alongSize,
+      area: bounds.width * bounds.height,
+      pad,
+    }
+  })
+  const mountingPads = entries
+    .toSorted((left, right) => right.area - left.area)
+    .slice(0, 2)
+    .toSorted((left, right) => left.along - right.along)
+  const mountingPadSet = new Set(mountingPads.map(({ pad }) => pad))
+  const contactPads = entries
+    .filter(({ pad }) => !mountingPadSet.has(pad))
+    .toSorted((left, right) => left.along - right.along)
+  if (contactPads.length < 2) return undefined
+
+  const contactDifferences = contactPads
+    .slice(1)
+    .map((entry, index) => entry.along - contactPads[index].along)
+  const padPitch = median(contactDifferences)
+  const pitchTolerance = Math.max(0.025, padPitch * 0.08)
+  if (
+    padPitch <= 0.08 ||
+    contactDifferences.some(
+      (difference) =>
+        difference <= 0 || Math.abs(difference - padPitch) > pitchTolerance,
+    )
+  ) {
+    return undefined
+  }
+
+  const firstContact = contactPads[0]
+  const lastContact = contactPads.at(-1)!
+  const mountingMargin = Math.max(0.05, padPitch * 0.1)
+  if (
+    mountingPads[0].along >= firstContact.along - mountingMargin ||
+    mountingPads[1].along <= lastContact.along + mountingMargin
+  ) {
+    return undefined
+  }
+
+  const contactCenter = (firstContact.along + lastContact.along) / 2
+  const mountingCenter = (mountingPads[0].along + mountingPads[1].along) / 2
+  if (
+    Math.abs(contactCenter - mountingCenter) > Math.max(0.08, padPitch * 0.3)
+  ) {
+    return undefined
+  }
+
+  const mountingAreaRatio =
+    median(mountingPads.map(({ area }) => area)) /
+    Math.max(median(contactPads.map(({ area }) => area)), 0.0001)
+  const description = `${target.title} ${target.subtitle} ${
+    target.sourceHints?.join(" ") ?? ""
+  }`.toLowerCase()
+  const hasFpcHint =
+    description.includes("fpc") ||
+    description.includes("ffc") ||
+    description.includes("flat flexible")
+  // Two-contact SMD connectors and some compact LEDs use the same mechanical
+  // pattern as a two-pin FPC: two central contacts and two outboard mounts.
+  const hasTwoContactWithMountsTopology = contactPads.length === 2
+  if (
+    !hasFpcHint &&
+    !hasTwoContactWithMountsTopology &&
+    (contactPads.length < 5 || mountingAreaRatio < 1.35)
+  ) {
+    return undefined
+  }
+  if (mountingAreaRatio < 1.15) return undefined
+
+  const mountingPadAreaDifference =
+    Math.abs(mountingPads[0].area - mountingPads[1].area) /
+    Math.max(mountingPads[0].area, mountingPads[1].area)
+  if (mountingPadAreaDifference > 0.3) return undefined
+
+  const contactAcrossTolerance = Math.max(
+    0.035,
+    median(contactPads.map(({ acrossSize }) => acrossSize)) * 0.08,
+  )
+  const rows = clusterCoordinates(
+    contactPads.map(({ across }) => across),
+    contactAcrossTolerance,
+  )
+  if (rows.length < 1 || rows.length > 2) return undefined
+
+  const staggered = rows.length === 2
+  const rowIndex = (across: number) =>
+    Math.abs(across - rows[0]) <= Math.abs(across - rows[1]) ? 0 : 1
+  if (
+    staggered &&
+    contactPads
+      .slice(1)
+      .some(
+        (entry, index) =>
+          rowIndex(entry.across) === rowIndex(contactPads[index].across),
+      )
+  ) {
+    return undefined
+  }
+
+  const lowerRow = staggered
+    ? contactPads.filter(({ across }) => rowIndex(across) === 0)
+    : contactPads
+  const upperRow = staggered
+    ? contactPads.filter(({ across }) => rowIndex(across) === 1)
+    : contactPads
+  const contactRowCenter = staggered ? (rows[0] + rows[1]) / 2 : rows[0]
+  const mountingRowCenter = median(mountingPads.map(({ across }) => across))
+  const mountingPadRowDistance = Math.abs(mountingRowCenter - contactRowCenter)
+  if (
+    Math.abs(mountingPads[0].across - mountingPads[1].across) >
+    Math.max(
+      0.1,
+      median(mountingPads.map(({ acrossSize }) => acrossSize)) * 0.2,
+    )
+  ) {
+    return undefined
+  }
+
+  return {
+    bottomPadLength: median(lowerRow.map(({ acrossSize }) => acrossSize)),
+    mountingPadLength: median(mountingPads.map(({ acrossSize }) => acrossSize)),
+    mountingPadPitch: mountingPads[1].along - mountingPads[0].along,
+    mountingPadRowDistance,
+    mountingPadWidth: median(mountingPads.map(({ alongSize }) => alongSize)),
+    mountingPadsOnTop:
+      mountingPadRowDistance >= 0.005 && mountingRowCenter > contactRowCenter,
+    padLength: median(contactPads.map(({ acrossSize }) => acrossSize)),
+    padPitch,
+    padWidth: median(contactPads.map(({ alongSize }) => alongSize)),
+    pinCount: contactPads.length,
+    reverse: staggered && rowIndex(firstContact.across) === 1,
+    rowPitch: staggered ? rows[1] - rows[0] : 0,
+    staggered,
+    topPadLength: median(upperRow.map(({ acrossSize }) => acrossSize)),
+  }
+}
+
+const analyzeFpc = (target: FootprintPreview) =>
+  analyzeFpcAxis(target, "x") ?? analyzeFpcAxis(target, "y")
+
+interface LatticeAxisFit {
+  coordinates: number[]
+  count: number
+  indices: number[]
+  pitch: number
+}
+
+const fitLatticeAxis = (
+  values: number[],
+  clusterTolerance: number,
+  fitTolerance: number,
+): LatticeAxisFit | undefined => {
+  const coordinates = clusterCoordinates(values, clusterTolerance)
+  if (coordinates.length < 2) return undefined
+
+  const minimum = coordinates[0]
+  const maximum = coordinates.at(-1)!
+  const span = maximum - minimum
+  let best:
+    | (LatticeAxisFit & {
+        score: number
+      })
+    | undefined
+
+  for (
+    let count = coordinates.length;
+    count <= Math.min(coordinates.length + 10, 16);
+    count += 1
+  ) {
+    const pitch = span / (count - 1)
+    if (pitch <= fitTolerance) continue
+    const indices = coordinates.map((coordinate) =>
+      Math.round((coordinate - minimum) / pitch),
+    )
+    if (new Set(indices).size !== indices.length) continue
+    const maximumError = Math.max(
+      ...coordinates.map((coordinate, index) =>
+        Math.abs(coordinate - (minimum + indices[index] * pitch)),
+      ),
+    )
+    if (maximumError > fitTolerance) continue
+
+    // Prefer the smallest low-error lattice so arbitrary coordinates do not
+    // get explained by an unnecessarily dense grid.
+    const score =
+      maximumError + (count - coordinates.length) * fitTolerance * 0.02
+    if (!best || score < best.score) {
+      best = { coordinates, count, indices, pitch, score }
+    }
+  }
+
+  if (!best) return undefined
+  const { score: _score, ...fit } = best
+  return fit
+}
+
+const analyzeSparsePinGrid = (
+  target: FootprintPreview,
+  clusterTolerance: number,
+  medianPadShortSide: number,
+): SparsePinGridAnalysis | undefined => {
+  const pads = getPadGeometries(target)
+  if (
+    pads.length < 4 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_plated_hole" ||
+        copper.shape !== "circle" ||
+        drill?.shape !== "circle",
+    )
+  ) {
+    return undefined
+  }
+
+  const fitTolerance = Math.max(0.025, medianPadShortSide * 0.07)
+  const xFit = fitLatticeAxis(
+    pads.map(({ copper }) => copper.x),
+    clusterTolerance,
+    fitTolerance,
+  )
+  const yFit = fitLatticeAxis(
+    pads.map(({ copper }) => copper.y),
+    clusterTolerance,
+    fitTolerance,
+  )
+  if (!xFit || !yFit) return undefined
+
+  const gridPositionCount = xFit.count * yFit.count
+  if (
+    gridPositionCount <= pads.length ||
+    gridPositionCount > 32 ||
+    xFit.count < 2 ||
+    yFit.count < 2
+  ) {
+    return undefined
+  }
+
+  const findClusterIndex = (coordinate: number, clusters: number[]) => {
+    let bestIndex = 0
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const [index, cluster] of clusters.entries()) {
+      const distance = Math.abs(coordinate - cluster)
+      if (distance < bestDistance) {
+        bestIndex = index
+        bestDistance = distance
+      }
+    }
+    return bestIndex
+  }
+
+  const occupiedPositions = new Set<number>()
+  for (const { copper } of pads) {
+    const xClusterIndex = findClusterIndex(copper.x, xFit.coordinates)
+    const yClusterIndex = findClusterIndex(copper.y, yFit.coordinates)
+    const column = xFit.indices[xClusterIndex]
+    // Footprinter grids enumerate rows from top to bottom.
+    const row = yFit.count - 1 - yFit.indices[yClusterIndex]
+    const position = row * xFit.count + column + 1
+    if (occupiedPositions.has(position)) return undefined
+    occupiedPositions.add(position)
+  }
+
+  const missingPositions = Array.from(
+    { length: gridPositionCount },
+    (_, index) => index + 1,
+  ).filter((position) => !occupiedPositions.has(position))
+
+  return {
+    columns: xFit.count,
+    missingPositions,
+    pitchX: xFit.pitch,
+    pitchY: yFit.pitch,
+    rows: yFit.count,
+  }
 }
 
 const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
@@ -355,9 +700,15 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
     (pad) => pad.type === "pcb_plated_hole",
   ).length
   const insetQuadAdjustment = topology === "four-sided" ? 0.2 : 0
+  const sparsePinGrid = analyzeSparsePinGrid(
+    target,
+    tolerance,
+    medianPadShortSide,
+  )
 
   return {
     bounds,
+    fpc: analyzeFpc(target),
     gridColumns: xCoordinates.length,
     gridRows: yCoordinates.length,
     heuristics: {
@@ -381,6 +732,7 @@ const analyzeTarget = (target: FootprintPreview): TargetAnalysis => {
       : median(topBottomEdgePads.map(({ bounds: bound }) => bound.width)),
     perimeterPadCount: sidePads.length,
     platedHoleCount,
+    sparsePinGrid,
     thermalPad: thermalPadEntry
       ? {
           height: thermalPadEntry.bound.height,
@@ -556,6 +908,7 @@ const getDomainScore = (target: FootprintPreview, family: string) => {
   const aliases: Record<string, string[]> = {
     cap: ["capacitor", "cap"],
     dfn: ["dfn"],
+    fpc: ["fpc", "ffc", "flat flexible"],
     lga: ["lga"],
     qfn: ["qfn"],
     res: ["resistor", "res"],
@@ -591,8 +944,16 @@ const tryBuild = (footprinterString: string) => {
   }
 }
 
-const formatMillimeters = (value: number) =>
-  `${Number(value.toFixed(4)).toString()}mm`
+const roundToTenMicrometers = (value: number) =>
+  Number((Math.round(value * 100) / 100).toFixed(2))
+
+export const formatLength = (value: number) => {
+  const millimeters = roundToTenMicrometers(value)
+  if (millimeters > 0 && millimeters < 0.1) {
+    return `${Math.round(millimeters * 1_000)}um`
+  }
+  return `${millimeters}mm`
+}
 
 const buildParameterizedString = (
   seed: string,
@@ -600,9 +961,7 @@ const buildParameterizedString = (
 ) => {
   const suffix = NUMERIC_PARAMETERS.flatMap((parameter) => {
     const value = parameters[parameter]
-    return value === undefined
-      ? []
-      : [`${parameter}${formatMillimeters(value)}`]
+    return value === undefined ? [] : [`${parameter}${formatLength(value)}`]
   }).join("_")
   return suffix ? `${seed}_${suffix}` : seed
 }
@@ -658,8 +1017,33 @@ const padShapeSignature = (preview: FootprintPreview) =>
 const areClose = (left: number, right: number) =>
   Math.abs(left - right) <= 0.00001
 
-// Geometry has already been matched before orientation is encoded. At this
-// point only pad/hole placement and pin identity determine pin1location.
+const areSamePoint = (
+  left: { x: number; y: number },
+  right: { x: number; y: number },
+) => areClose(left.x, right.x) && areClose(left.y, right.y)
+
+const haveSamePolygon = (left: ShapeGeometry, right: ShapeGeometry) => {
+  if (left.shape !== "polygon" && right.shape !== "polygon") return true
+  if (left.shape !== "polygon" || right.shape !== "polygon") return false
+  const leftPoints = getPolygonWorldPoints(left)
+  const rightPoints = getPolygonWorldPoints(right)
+  if (leftPoints.length !== rightPoints.length) return false
+
+  const matchesFrom = (startIndex: number, direction: 1 | -1) =>
+    leftPoints.every((leftPoint, index) => {
+      const rightIndex =
+        (startIndex + direction * index + rightPoints.length) %
+        rightPoints.length
+      return areSamePoint(leftPoint, rightPoints[rightIndex])
+    })
+
+  return rightPoints.some(
+    (rightPoint, startIndex) =>
+      areSamePoint(leftPoints[0], rightPoint) &&
+      (matchesFrom(startIndex, 1) || matchesFrom(startIndex, -1)),
+  )
+}
+
 const haveSamePadPlacement = (
   left: FootprintPreview,
   right: FootprintPreview,
@@ -676,11 +1060,39 @@ const haveSamePadPlacement = (
   const padsMatch = leftPads.every((leftPad, index) => {
     const rightPad = rightPads[index]
     if (!rightPad) return false
+    const leftSize = getOrientedPadSize(leftPad)
+    const rightSize = getOrientedPadSize(rightPad)
+    const drillsMatch =
+      !leftPad.drill && !rightPad.drill
+        ? true
+        : Boolean(leftPad.drill && rightPad.drill) &&
+          leftPad.drill?.shape === rightPad.drill?.shape &&
+          areClose(
+            (leftPad.drill?.x ?? 0) - leftPad.copper.x,
+            (rightPad.drill?.x ?? 0) - rightPad.copper.x,
+          ) &&
+          areClose(
+            (leftPad.drill?.y ?? 0) - leftPad.copper.y,
+            (rightPad.drill?.y ?? 0) - rightPad.copper.y,
+          ) &&
+          areClose(leftPad.drill?.width ?? 0, rightPad.drill?.width ?? 0) &&
+          areClose(leftPad.drill?.height ?? 0, rightPad.drill?.height ?? 0) &&
+          // Rotation has no geometric meaning for a circular drill.
+          (leftPad.drill?.shape === "circle" ||
+            areClose(
+              leftPad.drill?.rotation ?? 0,
+              rightPad.drill?.rotation ?? 0,
+            ))
     return (
       leftPad.element.type === rightPad.element.type &&
+      leftPad.copper.shape === rightPad.copper.shape &&
       getPortHints(leftPad).join("|") === getPortHints(rightPad).join("|") &&
       areClose(leftPad.copper.x, rightPad.copper.x) &&
-      areClose(leftPad.copper.y, rightPad.copper.y)
+      areClose(leftPad.copper.y, rightPad.copper.y) &&
+      areClose(leftSize.width, rightSize.width) &&
+      areClose(leftSize.height, rightSize.height) &&
+      haveSamePolygon(leftPad.copper, rightPad.copper) &&
+      drillsMatch
     )
   })
   if (!padsMatch) return false
@@ -690,8 +1102,16 @@ const haveSamePadPlacement = (
   return leftHoles.every((leftHole, index) => {
     const rightHole = rightHoles[index]
     if (!rightHole) return false
+    const leftSize = getShapeListBounds([{ ...leftHole, x: 0, y: 0 }])
+    const rightSize = getShapeListBounds([{ ...rightHole, x: 0, y: 0 }])
     return (
-      areClose(leftHole.x, rightHole.x) && areClose(leftHole.y, rightHole.y)
+      leftHole.shape === rightHole.shape &&
+      areClose(leftHole.x, rightHole.x) &&
+      areClose(leftHole.y, rightHole.y) &&
+      areClose(leftSize.width, rightSize.width) &&
+      areClose(leftSize.height, rightSize.height) &&
+      (leftHole.shape === "circle" ||
+        areClose(leftHole.rotation, rightHole.rotation))
     )
   })
 }
@@ -715,6 +1135,7 @@ const encodeOrientationInFootprinterString = (
 }
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
+  if (analysis.fpc) return new Set(["fpc"])
   if (analysis.platedHoleCount > analysis.perimeterPadCount / 2) {
     return new Set([
       "dip",
@@ -735,6 +1156,7 @@ const getPreferredFamilies = (analysis: TargetAnalysis) => {
     return new Set([
       "lga",
       "soic",
+      "sop8",
       "tssop",
       "ssop",
       "msop",
@@ -760,14 +1182,83 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
     if (family !== "usbcmidmount") seeds.add(family)
   }
 
+  if (
+    analysis.platedHoleCount === padCount &&
+    getPadGeometries(target).every(
+      ({ copper, drill }) =>
+        copper.shape === "circle" && drill?.shape === "circle",
+    )
+  ) {
+    seeds.add(`dip${padCount}_nosquareplating`)
+  }
+
+  if (analysis.sparsePinGrid) {
+    const { columns, missingPositions, pitchX, pitchY, rows } =
+      analysis.sparsePinGrid
+    seeds.add(
+      [
+        `pinrow${padCount}`,
+        `rows${rows}`,
+        `cols${columns}`,
+        `p${formatLength(pitchX)}`,
+        `py${formatLength(pitchY)}`,
+        `missing(${missingPositions.join(",")})`,
+        "nosquareplating",
+        `od${formatLength(analysis.heuristics.od)}`,
+        `id${formatLength(analysis.heuristics.id)}`,
+      ].join("_"),
+    )
+  }
+
+  if (analysis.fpc) {
+    const {
+      bottomPadLength,
+      mountingPadLength,
+      mountingPadPitch,
+      mountingPadRowDistance,
+      mountingPadWidth,
+      mountingPadsOnTop,
+      padLength,
+      padPitch,
+      padWidth,
+      pinCount,
+      reverse,
+      rowPitch,
+      staggered,
+      topPadLength,
+    } = analysis.fpc
+    const flags = [
+      staggered ? "staggered" : "",
+      reverse ? "reverse" : "",
+      mountingPadsOnTop ? "mounttop" : "",
+    ].filter(Boolean)
+    const parameters = [
+      `p${formatLength(padPitch)}`,
+      `pw${formatLength(padWidth)}`,
+      `pl${formatLength(padLength)}`,
+      ...(staggered
+        ? [
+            `py${formatLength(rowPitch)}`,
+            `toppl${formatLength(topPadLength)}`,
+            `bottompl${formatLength(bottomPadLength)}`,
+          ]
+        : []),
+      `mpx${formatLength(mountingPadPitch)}`,
+      `mpy${formatLength(mountingPadRowDistance)}`,
+      `mpw${formatLength(mountingPadWidth)}`,
+      `mpl${formatLength(mountingPadLength)}`,
+    ]
+    seeds.add(`fpc${pinCount}_${[...flags, ...parameters].join("_")}`)
+  }
+
   if (analysis.thermalPad && analysis.perimeterPadCount > 0) {
     // A 90-degree candidate rotation also rotates a non-square thermal pad.
     // Generate both source orientations so one remains aligned to the target.
     const thermalPadDimensionOptions = new Set([
-      `${formatMillimeters(analysis.thermalPad.width)}x${formatMillimeters(
+      `${formatLength(analysis.thermalPad.width)}x${formatLength(
         analysis.thermalPad.height,
       )}`,
-      `${formatMillimeters(analysis.thermalPad.height)}x${formatMillimeters(
+      `${formatLength(analysis.thermalPad.height)}x${formatLength(
         analysis.thermalPad.width,
       )}`,
     ])
@@ -823,11 +1314,11 @@ const generateSeeds = (target: FootprintPreview, analysis: TargetAnalysis) => {
 
   if (padCount === 2 && analysis.platedHoleCount === 0) {
     const padBounds = getCopperShapes(target).map(getPadBounds)
-    const passiveDimensions = `p${formatMillimeters(
+    const passiveDimensions = `p${formatLength(
       analysis.heuristics.p,
-    )}_pw${formatMillimeters(
+    )}_pw${formatLength(
       median(padBounds.map((bound) => bound.width)),
-    )}_ph${formatMillimeters(median(padBounds.map((bound) => bound.height)))}`
+    )}_ph${formatLength(median(padBounds.map((bound) => bound.height)))}`
     seeds.add(`res_${passiveDimensions}`)
     seeds.add(`cap_${passiveDimensions}`)
     for (const size of getFootprintSizes()) {
@@ -861,6 +1352,36 @@ const selectSeedsToOptimize = (
   const selected = new Map<string, SeedCandidate>()
   const targetPadShapeSignature = padShapeSignature(target)
   const selectedShapeFamilies = new Set<string>()
+
+  if (analysis.thermalPad) {
+    const selectedThermalPadFamilies = new Set<string>()
+    for (const candidate of candidates) {
+      const isQuarterTurn =
+        candidate.searchRotation === 90 || candidate.searchRotation === 270
+      const sourceWidth = isQuarterTurn
+        ? analysis.thermalPad.height
+        : analysis.thermalPad.width
+      const sourceHeight = isQuarterTurn
+        ? analysis.thermalPad.width
+        : analysis.thermalPad.height
+      const orientedThermalPadParameter = `_thermalpad${formatLength(
+        sourceWidth,
+      )}x${formatLength(sourceHeight)}`
+
+      if (
+        selectedThermalPadFamilies.has(candidate.family) ||
+        !candidate.footprinterString.includes(orientedThermalPadParameter) ||
+        padShapeSignature(candidate.preview) !== targetPadShapeSignature
+      ) {
+        continue
+      }
+      selectedThermalPadFamilies.add(candidate.family)
+      selected.set(
+        `${candidate.footprinterString}:${candidate.searchRotation}`,
+        candidate,
+      )
+    }
+  }
 
   if (analysis.topology === "four-sided" || analysis.topology === "two-sided") {
     const lgaGridCandidate = candidates.find(
@@ -944,6 +1465,11 @@ const findActiveParameters = (
   seed: SeedCandidate,
   analysis: TargetAnalysis,
 ) => {
+  // FPC analysis emits a complete parameterization from the repeated contact
+  // and mounting-pad geometry; appending duplicate generic parameters would
+  // only make the result less readable.
+  if (seed.family === "fpc") return []
+
   const active: NumericParameter[] = []
   const baseSignature = geometrySignature(seed.preview)
   const heuristics = getOrientedHeuristics(seed, analysis)
@@ -1072,7 +1598,7 @@ const optimizeSeed = (
   const simplifiedParameters = Object.fromEntries(
     Object.entries(best.parameters).map(([parameter, value]) => [
       parameter,
-      Number(value.toFixed(4)),
+      roundToTenMicrometers(value),
     ]),
   ) as Partial<Record<NumericParameter, number>>
   const bestSignature = geometrySignature(best.preview)
@@ -1154,14 +1680,11 @@ export const discoverFootprinterString = (
   const optimized = selectedSeeds.map((seed) =>
     optimizeSeed(seed, target, analysis),
   )
-  const targetPadShapeSignature = padShapeSignature(target)
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): RankedDiscoveryCandidate => {
       const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
         summarizeCopperComparison(candidate.preview, target, SEARCH_GRID_SIZE)
       const domainScore = getDomainScore(target, candidate.family)
-      const shapesMatch =
-        padShapeSignature(candidate.preview) === targetPadShapeSignature
       return {
         copperIntersectionOverUnion,
         domainScore,
@@ -1176,12 +1699,11 @@ export const discoverFootprinterString = (
               >)
             : {},
         preview: candidate.preview,
-        // Package-name hints can disambiguate equivalent geometry, but should
-        // not outrank a shape-exact candidate.
+        // Package-name hints disambiguate equivalent geometry through the
+        // domainScore sort tie-breaker below. They must not outrank a candidate
+        // with better copper overlap.
         rankingScore:
-          copperIntersectionOverUnion +
-          (holeIntersectionOverUnion - 1) * 0.12 +
-          domainScore * (shapesMatch ? 0.08 : 0.01),
+          copperIntersectionOverUnion + (holeIntersectionOverUnion - 1) * 0.12,
         searchRotation: candidate.searchRotation,
       }
     })

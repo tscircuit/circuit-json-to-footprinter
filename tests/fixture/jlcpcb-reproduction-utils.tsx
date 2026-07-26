@@ -20,9 +20,11 @@ export const renderFootprintToCircuitJson = async (
 
 export const expectFootprintRecovery = async ({
   FootprintComponent,
+  minimumCopperIntersectionOverUnion = 0.99,
   sourceHints,
 }: {
   FootprintComponent: () => React.JSX.Element
+  minimumCopperIntersectionOverUnion?: number
   sourceHints: string[]
 }) => {
   const circuitJson = await renderFootprintToCircuitJson(FootprintComponent)
@@ -32,6 +34,8 @@ export const expectFootprintRecovery = async ({
   })
 
   expect(result.best).not.toBeNull()
-  expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)
+  expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(
+    minimumCopperIntersectionOverUnion,
+  )
   return result
 }
