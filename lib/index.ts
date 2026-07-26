@@ -1,18 +1,10 @@
 import type { AnyCircuitElement } from "circuit-json"
-import { circuitJsonToFootprint } from "./circuit-json-footprint.js"
 import {
   discoverFootprinterString,
   type FootprinterDiscoveryResult,
 } from "./discover-footprinter.js"
+import { circuitJsonToFootprint } from "./footprint.js"
 
-export type {
-  CircuitJsonFootprint,
-  CircuitJsonToFootprintOptions,
-} from "./circuit-json-footprint.js"
-export {
-  circuitJsonToFootprint,
-  footprinterStringToFootprint,
-} from "./circuit-json-footprint.js"
 export {
   type Bounds,
   type CopperComparisonSummary,
@@ -25,6 +17,14 @@ export type {
   FootprinterDiscoveryCandidate,
   FootprinterDiscoveryResult,
 } from "./discover-footprinter.js"
+export type {
+  CircuitJsonToFootprintOptions,
+  Footprint,
+} from "./footprint.js"
+export {
+  circuitJsonToFootprint,
+  footprinterStringToFootprint,
+} from "./footprint.js"
 
 export interface CircuitJsonToFootprinterOptions {
   maxCandidates?: number

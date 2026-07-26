@@ -1,4 +1,3 @@
-export type { CircuitJsonFootprint } from "./circuit-json-footprint.js"
 export {
   type Bounds,
   type CopperComparisonSummary,
@@ -7,3 +6,4 @@ export {
   type RasterComparison,
   summarizeCopperComparison,
 } from "./compare-copper.js"
+export type { Footprint } from "./footprint.js"

@@ -1,9 +1,6 @@
 import { getFootprintNames, getFootprintSizes } from "@tscircuit/footprinter"
-import {
-  type CircuitJsonFootprint,
-  footprinterStringToFootprint,
-} from "./circuit-json-footprint.js"
 import { summarizeCopperComparison } from "./compare-copper.js"
+import { type Footprint, footprinterStringToFootprint } from "./footprint.js"
 import {
   type Bounds,
   getPolygonWorldPoints,
@@ -100,7 +97,7 @@ interface SeedCandidate {
   footprinterString: string
   geometryScore: number
   searchRotation: FootprintRotation
-  footprint: CircuitJsonFootprint
+  footprint: Footprint
 }
 
 export interface FootprinterDiscoveryCandidate {
@@ -115,7 +112,7 @@ export interface FootprinterDiscoveryCandidate {
 }
 
 interface RankedDiscoveryCandidate extends FootprinterDiscoveryCandidate {
-  footprint: CircuitJsonFootprint
+  footprint: Footprint
   searchRotation: FootprintRotation
 }
 
@@ -128,7 +125,7 @@ export interface FootprinterDiscoveryResult {
     targetPadCount: number
     topology: Topology
   }
-  target: CircuitJsonFootprint
+  target: Footprint
 }
 
 const getOrientedHeuristics = (
@@ -186,13 +183,13 @@ const getPadBounds = (pad: ShapeGeometry): Bounds => getShapeListBounds([pad])
 
 const getBounds = (pads: ShapeGeometry[]): Bounds => getShapeListBounds(pads)
 
-const getPadGeometries = (footprint: CircuitJsonFootprint) =>
+const getPadGeometries = (footprint: Footprint) =>
   footprint.pads.map((pad) => getTransformedPcbPadGeometry(pad, footprint))
 
-const getHoleGeometries = (footprint: CircuitJsonFootprint) =>
+const getHoleGeometries = (footprint: Footprint) =>
   footprint.holes.map((hole) => getTransformedPcbHoleGeometry(hole, footprint))
 
-const getCopperShapes = (footprint: CircuitJsonFootprint) =>
+const getCopperShapes = (footprint: Footprint) =>
   getPadGeometries(footprint).map(({ copper }) => copper)
 
 const clusterCoordinates = (values: number[], tolerance: number) => {
@@ -253,7 +250,7 @@ const getPitchEstimate = (pads: ShapeGeometry[], tolerance: number) => {
 }
 
 const analyzeFpcAxis = (
-  target: CircuitJsonFootprint,
+  target: Footprint,
   alongAxis: "x" | "y",
 ): FpcAnalysis | undefined => {
   const acrossAxis = alongAxis === "x" ? "y" : "x"
@@ -416,7 +413,7 @@ const analyzeFpcAxis = (
   }
 }
 
-const analyzeFpc = (target: CircuitJsonFootprint) =>
+const analyzeFpc = (target: Footprint) =>
   analyzeFpcAxis(target, "x") ?? analyzeFpcAxis(target, "y")
 
 interface LatticeAxisFit {
@@ -476,7 +473,7 @@ const fitLatticeAxis = (
 }
 
 const analyzeSparsePinGrid = (
-  target: CircuitJsonFootprint,
+  target: Footprint,
   clusterTolerance: number,
   medianPadShortSide: number,
 ): SparsePinGridAnalysis | undefined => {
@@ -555,7 +552,7 @@ const analyzeSparsePinGrid = (
   }
 }
 
-const analyzeTarget = (target: CircuitJsonFootprint): TargetAnalysis => {
+const analyzeTarget = (target: Footprint): TargetAnalysis => {
   const pads = getCopperShapes(target)
   const bounds = getBounds(pads)
   const padBounds = pads.map(getPadBounds)
@@ -766,9 +763,9 @@ const normalizePads = (pads: PcbPadGeometry[]) => {
 }
 
 export const rotateFootprint = (
-  footprint: CircuitJsonFootprint,
+  footprint: Footprint,
   rotation: FootprintRotation,
-): CircuitJsonFootprint => {
+): Footprint => {
   if (rotation === 0) return footprint
   const offset = rotatePoint(
     footprint.x ?? 0,
@@ -826,10 +823,7 @@ const normalizePortHint = (hint: string) => {
 const getPortHints = ({ element }: PcbPadGeometry) =>
   (element.port_hints ?? []).map(normalizePortHint)
 
-const getGeometryLoss = (
-  candidate: CircuitJsonFootprint,
-  target: CircuitJsonFootprint,
-) => {
+const getGeometryLoss = (candidate: Footprint, target: Footprint) => {
   if (candidate.pads.length !== target.pads.length) return 1_000
 
   const candidatePads = normalizePads(getPadGeometries(candidate))
@@ -896,12 +890,10 @@ const getGeometryLoss = (
   return loss / pairs.length
 }
 
-const getGeometryScore = (
-  candidate: CircuitJsonFootprint,
-  target: CircuitJsonFootprint,
-) => 1 / (1 + getGeometryLoss(candidate, target))
+const getGeometryScore = (candidate: Footprint, target: Footprint) =>
+  1 / (1 + getGeometryLoss(candidate, target))
 
-const getDomainScore = (target: CircuitJsonFootprint, family: string) => {
+const getDomainScore = (target: Footprint, family: string) => {
   const description = `${target.title} ${target.subtitle} ${
     target.sourceHints?.join(" ") ?? ""
   }`.toLowerCase()
@@ -966,7 +958,7 @@ const buildParameterizedString = (
   return suffix ? `${seed}_${suffix}` : seed
 }
 
-const geometrySignature = (footprint: CircuitJsonFootprint) => {
+const geometrySignature = (footprint: Footprint) => {
   const padSignature = getPadGeometries(footprint)
     .map(({ copper, drill, element }) => {
       const holeSignature = drill
@@ -1008,7 +1000,7 @@ const geometrySignature = (footprint: CircuitJsonFootprint) => {
   return `${padSignature}#${holeSignature}`
 }
 
-const padShapeSignature = (footprint: CircuitJsonFootprint) =>
+const padShapeSignature = (footprint: Footprint) =>
   getPadGeometries(footprint)
     .map(({ copper, element }) => `${element.type}:${copper.shape}`)
     .toSorted()
@@ -1044,10 +1036,7 @@ const haveSamePolygon = (left: ShapeGeometry, right: ShapeGeometry) => {
   )
 }
 
-const haveSamePadPlacement = (
-  left: CircuitJsonFootprint,
-  right: CircuitJsonFootprint,
-) => {
+const haveSamePadPlacement = (left: Footprint, right: Footprint) => {
   if (
     left.pads.length !== right.pads.length ||
     left.holes.length !== right.holes.length
@@ -1119,7 +1108,7 @@ const haveSamePadPlacement = (
 const encodeOrientationInFootprinterString = (
   footprinterString: string,
   searchRotation: FootprintRotation,
-  orientedFootprint: CircuitJsonFootprint,
+  orientedFootprint: Footprint,
 ) => {
   if (searchRotation === 0) return footprinterString
 
@@ -1172,10 +1161,7 @@ const getPreferredFamilies = (analysis: TargetAnalysis) => {
   return new Set<string>()
 }
 
-const generateSeeds = (
-  target: CircuitJsonFootprint,
-  analysis: TargetAnalysis,
-) => {
+const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   const padCount = target.pads.length
   const seeds = new Set<string>()
 
@@ -1350,7 +1336,7 @@ const generateSeeds = (
 const selectSeedsToOptimize = (
   candidates: SeedCandidate[],
   analysis: TargetAnalysis,
-  target: CircuitJsonFootprint,
+  target: Footprint,
 ) => {
   const selected = new Map<string, SeedCandidate>()
   const targetPadShapeSignature = padShapeSignature(target)
@@ -1501,7 +1487,7 @@ const findActiveParameters = (
 
 const optimizeSeed = (
   seed: SeedCandidate,
-  target: CircuitJsonFootprint,
+  target: Footprint,
   analysis: TargetAnalysis,
 ) => {
   const activeParameters = findActiveParameters(seed, analysis)
@@ -1641,7 +1627,7 @@ const optimizeSeed = (
 }
 
 export const discoverFootprinterString = (
-  target: CircuitJsonFootprint,
+  target: Footprint,
   maxCandidates = 5,
 ): FootprinterDiscoveryResult => {
   const analysis = analyzeTarget(target)

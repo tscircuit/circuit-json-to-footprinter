@@ -1,5 +1,5 @@
 import { getBoundsCenter, isPointInsidePolygon } from "@tscircuit/math-utils"
-import type { CircuitJsonFootprint } from "./circuit-json-footprint.js"
+import type { Footprint } from "./footprint.js"
 import {
   type Bounds,
   getShapeListBounds,
@@ -26,8 +26,8 @@ export interface RasterComparison {
   gridSize: number
   iou: number
   leftOnlyRatio: number
-  normalizedLeft: CircuitJsonFootprint
-  normalizedRight: CircuitJsonFootprint
+  normalizedLeft: Footprint
+  normalizedRight: Footprint
   occupancy: Uint8Array
   padCountMatch: boolean
   rightOnlyRatio: number
@@ -57,10 +57,10 @@ const addPadding = (bounds: Bounds): Bounds => {
 }
 
 const translateFootprint = (
-  footprint: CircuitJsonFootprint,
+  footprint: Footprint,
   deltaX: number,
   deltaY: number,
-): CircuitJsonFootprint => {
+): Footprint => {
   return {
     holes: footprint.holes,
     pads: footprint.pads,
@@ -73,20 +73,18 @@ const translateFootprint = (
   }
 }
 
-const centerFootprint = (
-  footprint: CircuitJsonFootprint,
-): CircuitJsonFootprint => {
+const centerFootprint = (footprint: Footprint): Footprint => {
   const bounds = getShapeListBounds(getCopperShapes(footprint))
   const center = getBoundsCenter(bounds)
   return translateFootprint(footprint, -center.x, -center.y)
 }
 
-const getCopperShapes = (footprint: CircuitJsonFootprint): ShapeGeometry[] =>
+const getCopperShapes = (footprint: Footprint): ShapeGeometry[] =>
   footprint.pads.map(
     (pad) => getTransformedPcbPadGeometry(pad, footprint).copper,
   )
 
-const getHoleShapes = (footprint: CircuitJsonFootprint): ShapeGeometry[] => [
+const getHoleShapes = (footprint: Footprint): ShapeGeometry[] => [
   ...footprint.pads.flatMap((pad) => {
     const drill = getTransformedPcbPadGeometry(pad, footprint).drill
     return drill ? [drill] : []
@@ -256,8 +254,8 @@ const rasterizeShapes = (
 }
 
 const compareNormalizedFootprints = (
-  left: CircuitJsonFootprint,
-  right: CircuitJsonFootprint,
+  left: Footprint,
+  right: Footprint,
   gridSize: number,
   includeOccupancy: boolean,
 ) => {
@@ -274,8 +272,8 @@ const compareNormalizedFootprints = (
 }
 
 export const compareFootprints = (
-  left: CircuitJsonFootprint,
-  right: CircuitJsonFootprint,
+  left: Footprint,
+  right: Footprint,
   gridSize = DEFAULT_GRID_SIZE,
 ): RasterComparison => {
   const { comparison, normalizedLeft, normalizedRight } =
@@ -296,8 +294,8 @@ export const compareFootprints = (
 }
 
 export const summarizeCopperComparison = (
-  left: CircuitJsonFootprint,
-  right: CircuitJsonFootprint,
+  left: Footprint,
+  right: Footprint,
   gridSize = DEFAULT_GRID_SIZE,
 ): CopperComparisonSummary => {
   const { comparison, normalizedLeft, normalizedRight } =

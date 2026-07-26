@@ -7,7 +7,7 @@ import type {
 } from "circuit-json"
 import { validatePcbPad } from "./footprint-geometry.js"
 
-export interface CircuitJsonFootprint {
+export interface Footprint {
   holes: PcbHole[]
   pads: Array<PcbSmtPad | PcbPlatedHole>
   rotation?: number
@@ -35,7 +35,7 @@ const isPcbHole = (element: AnyCircuitElement): element is PcbHole =>
 export const circuitJsonToFootprint = (
   circuitJson: readonly AnyCircuitElement[],
   options: CircuitJsonToFootprintOptions = {},
-): CircuitJsonFootprint => {
+): Footprint => {
   const pads = circuitJson.filter(isPcbPad)
   const holes = circuitJson.filter(isPcbHole)
 
@@ -61,7 +61,7 @@ export const circuitJsonToFootprint = (
 
 export const footprinterStringToFootprint = (
   footprinterString: string,
-): CircuitJsonFootprint => {
+): Footprint => {
   const normalized = footprinterString.trim()
   if (!normalized) throw new Error("Footprinter string is required")
   return circuitJsonToFootprint(fp.string(normalized).circuitJson(), {
