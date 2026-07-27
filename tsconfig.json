@@ -1,11 +1,12 @@
 {
-  "include": ["lib/**/*", "tests/**/*"],
+  "include": ["lib/**/*", "scripts/**/*", "tests/**/*"],
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
     "target": "ESNext",
     "module": "Preserve",
     "moduleDetection": "force",
     "jsx": "react-jsx",
+    "types": ["bun"],
     "allowJs": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

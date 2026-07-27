@@ -2,6 +2,7 @@ node_modules
 dist
 *.tgz
 coverage
+benchmark-output
 *.lcov
 *.log
 .env*

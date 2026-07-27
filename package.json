@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "audit:jlc": "bun run scripts/audit-jlc-stock.ts",
+    "benchmark:jlc5000": "bun scripts/benchmark-jlc5000.ts",
     "build": "tsup lib/index.ts lib/compare.ts --format esm --dts",
     "format": "biome check --write .",
     "format:check": "biome check .",

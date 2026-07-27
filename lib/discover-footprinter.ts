@@ -1899,6 +1899,55 @@ const optimizeSeed = (
     if (current && (!best || current.loss < best.loss)) best = current
   }
 
+  // Footprinter strings are emitted at 0.01 mm precision, so the continuous
+  // gradient search above can stop next to the best representable footprint.
+  // Refine the emitted values directly; this is especially important for
+  // small SOT/DFN pads where one 0.01 mm step materially changes overlap.
+  if (best) {
+    type EvaluatedSeed = NonNullable<ReturnType<typeof evaluate>>
+    let refined: EvaluatedSeed | null = evaluate(
+      Object.fromEntries(
+        Object.entries(best.parameters).map(([parameter, value]) => [
+          parameter,
+          roundToTenMicrometers(value),
+        ]),
+      ) as Partial<Record<NumericParameter, number>>,
+    )
+
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      const round = refined
+      if (!round) break
+      let improved = false
+      for (const parameter of activeParameters) {
+        const baseline = refined
+        if (!baseline) break
+        const currentValue = baseline.parameters[parameter] ?? 0.05
+        let bestForParameter = baseline
+
+        for (const delta of [-0.02, -0.01, 0.01, 0.02]) {
+          const candidate = evaluate({
+            ...baseline.parameters,
+            [parameter]: Math.max(
+              roundToTenMicrometers(currentValue + delta),
+              0.025,
+            ),
+          })
+          if (candidate && candidate.loss < bestForParameter.loss) {
+            bestForParameter = candidate
+          }
+        }
+
+        if (bestForParameter !== baseline) {
+          refined = bestForParameter
+          improved = true
+        }
+      }
+      if (!improved) break
+    }
+
+    if (refined && refined.loss < best.loss) best = refined
+  }
+
   if (!best || seed.geometryScore >= 1 / (1 + best.loss)) {
     return {
       ...seed,
