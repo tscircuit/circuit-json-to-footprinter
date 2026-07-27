@@ -1475,14 +1475,18 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     seeds.add(`usbcmidmount16_${parameters.join("_")}`)
   }
 
-  if (
+  const hasOnlyRoundPlatedHoles =
     analysis.platedHoleCount === padCount &&
     getPadGeometries(target).every(
       ({ copper, drill }) =>
         copper.shape === "circle" && drill?.shape === "circle",
     )
-  ) {
+
+  if (hasOnlyRoundPlatedHoles) {
     seeds.add(`dip${padCount}_nosquareplating`)
+    if (analysis.topology === "linear") {
+      seeds.add(`pinrow${padCount}_nosquareplating`)
+    }
   }
 
   if (analysis.sparsePinGrid) {
