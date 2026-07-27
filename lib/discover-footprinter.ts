@@ -62,6 +62,7 @@ interface TargetAnalysis {
   perimeterPadCount: number
   platedHoleCount: number
   quadSidePadCounts: QuadSidePadCounts
+  rj45?: Rj45Analysis
   sparsePinGrid?: SparsePinGridAnalysis
   usbCMidMount?: UsbCMidMountAnalysis
   thermalPad?: {
@@ -88,6 +89,26 @@ interface DpakAnalysis {
   span: number
   tabh: number
   tabw: number
+}
+
+interface Rj45Analysis {
+  firstPinLeft: boolean
+  firstPinTop: boolean
+  holeDiameter: number
+  holeX: number
+  holeY: number
+  id: number
+  ledPins: boolean
+  ledPitch?: number
+  ledX?: number
+  ledY?: number
+  od: number
+  p: number
+  py: number
+  shieldId: number
+  shieldOd: number
+  shieldX: number
+  shieldY: number
 }
 
 interface SparsePinGridAnalysis {
@@ -758,6 +779,190 @@ const getUsbCMidMountGeometry = (
   }
 }
 
+const analyzeRj45 = (target: Footprint): Rj45Analysis | undefined => {
+  const pads = getPadGeometries(target)
+  if (
+    (pads.length !== 10 && pads.length !== 14) ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_plated_hole" ||
+        copper.shape !== "circle" ||
+        drill?.shape !== "circle",
+    )
+  ) {
+    return undefined
+  }
+
+  const locatorHoles = getHoleGeometries(target)
+  if (
+    locatorHoles.length !== 2 ||
+    locatorHoles.some((hole) => hole.shape !== "circle")
+  ) {
+    return undefined
+  }
+
+  const entries = pads
+    .map((pad) => ({
+      id: pad.drill?.width ?? 0,
+      od: pad.copper.width,
+      pad,
+    }))
+    .toSorted((left, right) => right.od - left.od)
+  const shieldPins = entries.slice(0, 2)
+  const contactPins = entries.slice(2)
+  const contactOd = median(contactPins.map(({ od }) => od))
+  if (
+    contactPins.length !== (pads.length === 14 ? 12 : 8) ||
+    shieldPins.some(({ od }) => od < contactOd * 1.25) ||
+    contactPins.some(
+      ({ od }) => Math.abs(od - contactOd) > Math.max(0.04, contactOd * 0.08),
+    )
+  ) {
+    return undefined
+  }
+
+  const rowTolerance = Math.max(0.04, contactOd * 0.06)
+  const rowYs = clusterCoordinates(
+    contactPins.map(({ pad }) => pad.copper.y),
+    rowTolerance,
+  )
+  const rows = rowYs
+    .map((y) => ({
+      pins: contactPins.filter(
+        ({ pad }) => Math.abs(pad.copper.y - y) <= rowTolerance,
+      ),
+      y,
+    }))
+    .filter(({ pins }) => pins.length === 4)
+  if (rows.length < 2) return undefined
+
+  let signalRows:
+    | {
+        p: number
+        rows: [(typeof rows)[number], (typeof rows)[number]]
+        score: number
+      }
+    | undefined
+  for (let leftIndex = 0; leftIndex < rows.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < rows.length;
+      rightIndex += 1
+    ) {
+      const pair = [rows[leftIndex], rows[rightIndex]] as [
+        (typeof rows)[number],
+        (typeof rows)[number],
+      ]
+      const xs = pair
+        .flatMap(({ pins }) => pins.map(({ pad }) => pad.copper.x))
+        .toSorted((left, right) => left - right)
+      const differences = xs.slice(1).map((x, index) => x - xs[index])
+      const p = median(differences)
+      if (p <= 0.2) continue
+      const score = Math.max(
+        ...differences.map((difference) => Math.abs(difference - p)),
+      )
+      if (score > Math.max(0.06, p * 0.08)) continue
+      if (!signalRows || score < signalRows.score) {
+        signalRows = { p, rows: pair, score }
+      }
+    }
+  }
+  if (!signalRows) return undefined
+
+  const signalPins = signalRows.rows.flatMap(({ pins }) => pins)
+  const signalPinSet = new Set(signalPins.map(({ pad }) => pad))
+  const ledPins = contactPins.filter(({ pad }) => !signalPinSet.has(pad))
+  if (ledPins.length !== (pads.length === 14 ? 4 : 0)) return undefined
+
+  const signalXs = signalPins.map(({ pad }) => pad.copper.x)
+  const signalCenterX = (Math.min(...signalXs) + Math.max(...signalXs)) / 2
+  const signalCenterY = (signalRows.rows[0].y + signalRows.rows[1].y) / 2
+  const py = Math.abs(signalRows.rows[1].y - signalRows.rows[0].y)
+  if (py <= signalRows.p * 0.6) return undefined
+
+  const shieldCenterY = median(shieldPins.map(({ pad }) => pad.copper.y))
+  const shieldXs = shieldPins.map(({ pad }) => pad.copper.x - signalCenterX)
+  const shieldTolerance = Math.max(0.06, contactOd * 0.08)
+  if (
+    Math.abs(shieldPins[0].pad.copper.y - shieldPins[1].pad.copper.y) >
+      shieldTolerance ||
+    !shieldXs.some((x) => x < 0) ||
+    !shieldXs.some((x) => x > 0) ||
+    Math.abs(Math.abs(shieldXs[0]) - Math.abs(shieldXs[1])) > shieldTolerance
+  ) {
+    return undefined
+  }
+
+  const holeCenterY = median(locatorHoles.map((hole) => hole.y))
+  const holeXs = locatorHoles.map((hole) => hole.x - signalCenterX)
+  if (
+    Math.abs(locatorHoles[0].y - locatorHoles[1].y) > shieldTolerance ||
+    !holeXs.some((x) => x < 0) ||
+    !holeXs.some((x) => x > 0) ||
+    Math.abs(Math.abs(holeXs[0]) - Math.abs(holeXs[1])) > shieldTolerance
+  ) {
+    return undefined
+  }
+
+  let ledX: number | undefined
+  let ledPitch: number | undefined
+  let ledY: number | undefined
+  if (ledPins.length === 4) {
+    const sortedLedXs = ledPins
+      .map(({ pad }) => pad.copper.x - signalCenterX)
+      .toSorted((left, right) => left - right)
+    const ledRowY = median(ledPins.map(({ pad }) => pad.copper.y))
+    if (
+      ledPins.some(
+        ({ pad }) => Math.abs(pad.copper.y - ledRowY) > rowTolerance,
+      ) ||
+      Math.abs(sortedLedXs[0] + sortedLedXs[3]) > shieldTolerance ||
+      Math.abs(sortedLedXs[1] + sortedLedXs[2]) > shieldTolerance
+    ) {
+      return undefined
+    }
+    ledX = Math.abs(sortedLedXs[1])
+    ledPitch = Math.abs(sortedLedXs[0]) - ledX
+    ledY = ledRowY - signalCenterY
+    if (ledPitch <= 0.2) return undefined
+  }
+
+  const pin1 = signalPins.find(({ pad }) =>
+    (pad.element.port_hints ?? []).some((hint) =>
+      /^(?:pin)?1$/i.test(hint.trim()),
+    ),
+  )?.pad.copper
+  const lowerRow = signalRows.rows.toSorted(
+    (left, right) => left.y - right.y,
+  )[0]
+  const lowerRowXs = lowerRow.pins.map(
+    ({ pad }) => pad.copper.x - signalCenterX,
+  )
+  const lowerRowExtendsRight =
+    Math.max(...lowerRowXs) > Math.abs(Math.min(...lowerRowXs))
+
+  return {
+    firstPinLeft: pin1 ? pin1.x < signalCenterX : false,
+    firstPinTop: pin1 ? pin1.y > signalCenterY : !lowerRowExtendsRight,
+    holeDiameter: median(locatorHoles.map((hole) => hole.width)),
+    holeX: median(holeXs.map(Math.abs)),
+    holeY: holeCenterY - signalCenterY,
+    id: median(contactPins.map(({ id }) => id)),
+    ledPins: ledPins.length === 4,
+    ledPitch,
+    ledX,
+    ledY,
+    od: contactOd,
+    p: signalRows.p,
+    py,
+    shieldId: median(shieldPins.map(({ id }) => id)),
+    shieldOd: median(shieldPins.map(({ od }) => od)),
+    shieldX: median(shieldXs.map(Math.abs)),
+    shieldY: shieldCenterY - signalCenterY,
+  }
+}
+
 const analyzeDpak = (target: Footprint): DpakAnalysis | undefined => {
   const pads = getPadGeometries(target)
   if (
@@ -1032,6 +1237,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     medianPadShortSide,
   )
   const dpak = analyzeDpak(target)
+  const rj45 = analyzeRj45(target)
 
   return {
     bounds,
@@ -1066,6 +1272,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     perimeterPadCount: sidePads.length,
     platedHoleCount,
     quadSidePadCounts,
+    rj45,
     sparsePinGrid,
     thermalPad: thermalPadEntry
       ? {
@@ -1251,6 +1458,7 @@ const getDomainScore = (target: Footprint, family: string) => {
     ssop: ["ssop"],
     tssop: ["tssop"],
     usbcmidmount: ["usb-c", "usb c", "type-c", "type c", "usbc"],
+    rj45: ["rj45", "ethernet", "8p8c"],
   }
   const terms = aliases[family] ?? [family]
   return terms.some((term) => description.includes(term)) ? 1 : 0
@@ -1471,6 +1679,7 @@ const encodeOrientationInFootprinterString = (
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
   if (analysis.dpak) return new Set([analysis.dpak.family])
   if (analysis.fpc) return new Set(["fpc"])
+  if (analysis.rj45) return new Set(["rj45"])
   if (analysis.platedHoleCount > analysis.perimeterPadCount / 2) {
     return new Set([
       "dip",
@@ -1562,6 +1771,50 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
         `span${formatPreciseLength(span)}`,
       ].join("_"),
     )
+  }
+
+  if (analysis.rj45) {
+    const {
+      firstPinLeft,
+      firstPinTop,
+      holeDiameter,
+      holeX,
+      holeY,
+      id,
+      ledPins,
+      ledPitch,
+      ledX,
+      ledY,
+      od,
+      p,
+      py,
+      shieldId,
+      shieldOd,
+      shieldX,
+      shieldY,
+    } = analysis.rj45
+    const parameters = [
+      ledPins ? "ledpins" : "",
+      firstPinLeft ? "firstpinleft" : "",
+      firstPinTop ? "firstpintop" : "",
+      `p${formatPreciseLength(p)}`,
+      `py${formatPreciseLength(py)}`,
+      `id${formatPreciseLength(id)}`,
+      `od${formatPreciseLength(od)}`,
+      `shieldx${formatPreciseLength(shieldX)}`,
+      `shieldy${formatPreciseLength(shieldY)}`,
+      `shieldid${formatPreciseLength(shieldId)}`,
+      `shieldod${formatPreciseLength(shieldOd)}`,
+      `holex${formatPreciseLength(holeX)}`,
+      `holey${formatPreciseLength(holeY)}`,
+      `holed${formatPreciseLength(holeDiameter)}`,
+      ledPins && ledX !== undefined ? `ledx${formatPreciseLength(ledX)}` : "",
+      ledPins && ledPitch !== undefined
+        ? `ledp${formatPreciseLength(ledPitch)}`
+        : "",
+      ledPins && ledY !== undefined ? `ledy${formatPreciseLength(ledY)}` : "",
+    ].filter(Boolean)
+    seeds.add(`rj45_${parameters.join("_")}`)
   }
 
   if (analysis.usbCMidMount && !analysis.usbCMidMount.noHoles) {
