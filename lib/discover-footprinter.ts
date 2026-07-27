@@ -51,6 +51,7 @@ const PIN1_LOCATIONS: Pin1Location[] = [
 
 interface TargetAnalysis {
   bounds: Bounds
+  dpak?: DpakAnalysis
   fpc?: FpcAnalysis
   gridColumns: number
   gridRows: number
@@ -76,6 +77,17 @@ interface QuadSidePadCounts {
   top: number
   right: number
   bottom: number
+}
+
+interface DpakAnalysis {
+  family: "d2pak" | "dpak"
+  numberOfPads: 3 | 6
+  p: number
+  pl: number
+  pw: number
+  span: number
+  tabh: number
+  tabw: number
 }
 
 interface SparsePinGridAnalysis {
@@ -746,6 +758,113 @@ const getUsbCMidMountGeometry = (
   }
 }
 
+const analyzeDpak = (target: Footprint): DpakAnalysis | undefined => {
+  const pads = getPadGeometries(target)
+  if (
+    (pads.length !== 3 && pads.length !== 6) ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" || drill || copper.shape !== "rect",
+    )
+  ) {
+    return undefined
+  }
+
+  const entries = pads
+    .map((pad) => {
+      const bounds = getPadBounds(pad.copper)
+      return {
+        area: bounds.width * bounds.height,
+        bounds,
+        pad,
+      }
+    })
+    .toSorted((left, right) => right.area - left.area)
+  const tab = entries[0]
+  const leads = entries.slice(1)
+  const medianLeadArea = median(leads.map(({ area }) => area))
+  if (tab.area < medianLeadArea * 3.5) return undefined
+
+  const medianLeadWidth = median(leads.map(({ bounds }) => bounds.width))
+  const medianLeadHeight = median(leads.map(({ bounds }) => bounds.height))
+  const dimensionTolerance = 0.08
+  if (
+    leads.some(
+      ({ bounds }) =>
+        Math.abs(bounds.width - medianLeadWidth) >
+          Math.max(0.03, medianLeadWidth * dimensionTolerance) ||
+        Math.abs(bounds.height - medianLeadHeight) >
+          Math.max(0.03, medianLeadHeight * dimensionTolerance),
+    )
+  ) {
+    return undefined
+  }
+
+  const leadXs = leads.map(({ pad }) => pad.copper.x)
+  const leadYs = leads.map(({ pad }) => pad.copper.y)
+  const xSpread = Math.max(...leadXs) - Math.min(...leadXs)
+  const ySpread = Math.max(...leadYs) - Math.min(...leadYs)
+  const leadsAreVertical = xSpread <= ySpread
+  const alongCoordinates = leadsAreVertical ? leadYs : leadXs
+  const acrossCoordinates = leadsAreVertical ? leadXs : leadYs
+  const alongSize = leadsAreVertical ? medianLeadHeight : medianLeadWidth
+  const acrossSize = leadsAreVertical ? medianLeadWidth : medianLeadHeight
+  const collinearityTolerance = Math.max(0.04, alongSize * 0.12)
+  if (
+    Math.max(...acrossCoordinates) - Math.min(...acrossCoordinates) >
+    collinearityTolerance
+  ) {
+    return undefined
+  }
+
+  const sortedAlongCoordinates = alongCoordinates.toSorted(
+    (left, right) => left - right,
+  )
+  const differences = sortedAlongCoordinates
+    .slice(1)
+    .map((coordinate, index) => coordinate - sortedAlongCoordinates[index])
+  const repeatedPitch = median(differences)
+  if (
+    repeatedPitch <= 0.05 ||
+    (pads.length === 6 &&
+      differences.some(
+        (difference) =>
+          Math.abs(difference - repeatedPitch) >
+          Math.max(0.04, repeatedPitch * 0.08),
+      ))
+  ) {
+    return undefined
+  }
+
+  const leadAlongCenter = median(alongCoordinates)
+  const leadAcrossCenter = median(acrossCoordinates)
+  const tabAlongCenter = leadsAreVertical ? tab.pad.copper.y : tab.pad.copper.x
+  const tabAcrossCenter = leadsAreVertical ? tab.pad.copper.x : tab.pad.copper.y
+  if (
+    Math.abs(tabAlongCenter - leadAlongCenter) >
+    Math.max(0.06, repeatedPitch * 0.15)
+  ) {
+    return undefined
+  }
+  const span = Math.abs(tabAcrossCenter - leadAcrossCenter)
+  if (span <= acrossSize) return undefined
+
+  const tabw = leadsAreVertical ? tab.bounds.width : tab.bounds.height
+  const tabh = leadsAreVertical ? tab.bounds.height : tab.bounds.width
+  return {
+    family: Math.max(tabw, tabh) >= 7.5 ? "d2pak" : "dpak",
+    numberOfPads: pads.length,
+    // Three-pad DPAKs omit the center lead, so pins 1 and 3 are two pitch
+    // intervals apart. Five-lead variants use every adjacent position.
+    p: pads.length === 3 ? repeatedPitch / 2 : repeatedPitch,
+    pl: acrossSize,
+    pw: alongSize,
+    span,
+    tabh,
+    tabw,
+  }
+}
+
 const analyzeTarget = (target: Footprint): TargetAnalysis => {
   const pads = getCopperShapes(target)
   const bounds = getBounds(pads)
@@ -912,9 +1031,11 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     tolerance,
     medianPadShortSide,
   )
+  const dpak = analyzeDpak(target)
 
   return {
     bounds,
+    dpak,
     fpc: analyzeFpc(target),
     gridColumns: xCoordinates.length,
     gridRows: yCoordinates.length,
@@ -1119,7 +1240,9 @@ const getDomainScore = (target: Footprint, family: string) => {
   }`.toLowerCase()
   const aliases: Record<string, string[]> = {
     cap: ["capacitor", "cap"],
+    d2pak: ["d2pak", "to-263", "to263"],
     dfn: ["dfn"],
+    dpak: ["dpak", "to-252", "to252"],
     fpc: ["fpc", "ffc", "flat flexible"],
     lga: ["lga"],
     qfn: ["qfn"],
@@ -1346,6 +1469,7 @@ const encodeOrientationInFootprinterString = (
 }
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
+  if (analysis.dpak) return new Set([analysis.dpak.family])
   if (analysis.fpc) return new Set(["fpc"])
   if (analysis.platedHoleCount > analysis.perimeterPadCount / 2) {
     return new Set([
@@ -1423,6 +1547,21 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     seeds.add(`${family}${padCount}`)
     // Mid-mount USB-C variants are named by their explicit 16-pin form.
     if (family !== "usbcmidmount") seeds.add(family)
+  }
+
+  if (analysis.dpak) {
+    const { family, numberOfPads, p, pl, pw, span, tabh, tabw } = analysis.dpak
+    seeds.add(
+      [
+        `${family}${numberOfPads}`,
+        `p${formatPreciseLength(p)}`,
+        `pw${formatPreciseLength(pw)}`,
+        `pl${formatPreciseLength(pl)}`,
+        `tabw${formatPreciseLength(tabw)}`,
+        `tabh${formatPreciseLength(tabh)}`,
+        `span${formatPreciseLength(span)}`,
+      ].join("_"),
+    )
   }
 
   if (analysis.usbCMidMount && !analysis.usbCMidMount.noHoles) {
