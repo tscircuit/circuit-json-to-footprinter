@@ -53,6 +53,7 @@ interface TargetAnalysis {
   bounds: Bounds
   dpak?: DpakAnalysis
   fpc?: FpcAnalysis
+  jstSmd?: JstSmdAnalysis
   gridColumns: number
   gridRows: number
   heuristics: Record<NumericParameter, number>
@@ -134,6 +135,19 @@ interface FpcAnalysis {
   rowPitch: number
   staggered: boolean
   topPadLength: number
+}
+
+interface JstSmdAnalysis {
+  fitScore: number
+  mountingPadLength: number
+  mountingPadPitch: number
+  mountingPadRowDistance: number
+  mountingPadWidth: number
+  mountingPadsOnTop: boolean
+  padLength: number
+  padPitch: number
+  padWidth: number
+  pinCount: number
 }
 
 interface UsbCMidMountAnalysis {
@@ -499,6 +513,197 @@ const analyzeFpcAxis = (
 
 const analyzeFpc = (target: Footprint) =>
   analyzeFpcAxis(target, "x") ?? analyzeFpcAxis(target, "y")
+
+const analyzeJstSmdAxis = (
+  target: Footprint,
+  alongAxis: "x" | "y",
+): JstSmdAnalysis | undefined => {
+  const description = `${target.title} ${target.subtitle} ${
+    target.sourceHints?.join(" ") ?? ""
+  }`.toLowerCase()
+  if (
+    !/\bjst\b/.test(description) &&
+    !/wire[- ]?to[- ]?board/.test(description) &&
+    !/\bsmd\s*,?\s*p\s*=/.test(description)
+  ) {
+    return undefined
+  }
+
+  const acrossAxis = alongAxis === "x" ? "y" : "x"
+  const pads = getPadGeometries(target)
+  if (
+    pads.length < 4 ||
+    pads.length > 14 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" ||
+        drill ||
+        (copper.shape !== "rect" && copper.shape !== "pill"),
+    )
+  ) {
+    return undefined
+  }
+
+  const entries = pads.map((pad) => {
+    const bounds = getPadBounds(pad.copper)
+    return {
+      across: pad.copper[acrossAxis],
+      acrossSize: alongAxis === "x" ? bounds.height : bounds.width,
+      along: pad.copper[alongAxis],
+      alongSize: alongAxis === "x" ? bounds.width : bounds.height,
+      pad,
+    }
+  })
+  const relativeSpread = (values: number[]) => {
+    const middle = Math.max(median(values), 0.0001)
+    return (Math.max(...values) - Math.min(...values)) / middle
+  }
+  const pinNumber = ({ pad }: (typeof entries)[number]) => {
+    for (const hint of pad.element.port_hints ?? []) {
+      const match = hint.trim().match(/^(?:pin)?(\d+)$/i)
+      if (match?.[1]) return Number.parseInt(match[1], 10)
+    }
+    return undefined
+  }
+
+  let best: JstSmdAnalysis | undefined
+  for (let leftIndex = 0; leftIndex < entries.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < entries.length;
+      rightIndex += 1
+    ) {
+      const mountingPads = [entries[leftIndex], entries[rightIndex]].toSorted(
+        (left, right) => left.along - right.along,
+      )
+      const contacts = entries
+        .filter((_, index) => index !== leftIndex && index !== rightIndex)
+        .toSorted((left, right) => left.along - right.along)
+      if (contacts.length < 2) continue
+
+      const contactAlongSpread = relativeSpread(
+        contacts.map(({ alongSize }) => alongSize),
+      )
+      const contactAcrossSpread = relativeSpread(
+        contacts.map(({ acrossSize }) => acrossSize),
+      )
+      const mountingAlongSpread = relativeSpread(
+        mountingPads.map(({ alongSize }) => alongSize),
+      )
+      const mountingAcrossSpread = relativeSpread(
+        mountingPads.map(({ acrossSize }) => acrossSize),
+      )
+      if (
+        contactAlongSpread > 0.12 ||
+        contactAcrossSpread > 0.12 ||
+        mountingAlongSpread > 0.15 ||
+        mountingAcrossSpread > 0.15
+      ) {
+        continue
+      }
+
+      const contactAcrossSize = median(
+        contacts.map(({ acrossSize }) => acrossSize),
+      )
+      const contactRowCenter = median(contacts.map(({ across }) => across))
+      if (
+        contacts.some(
+          ({ across }) =>
+            Math.abs(across - contactRowCenter) >
+            Math.max(0.04, contactAcrossSize * 0.08),
+        )
+      ) {
+        continue
+      }
+
+      const differences = contacts
+        .slice(1)
+        .map((entry, index) => entry.along - contacts[index].along)
+      const padPitch = median(differences)
+      if (
+        padPitch <= 0.08 ||
+        differences.some(
+          (difference) =>
+            Math.abs(difference - padPitch) > Math.max(0.04, padPitch * 0.08),
+        )
+      ) {
+        continue
+      }
+
+      const mountingPadWidth = median(
+        mountingPads.map(({ alongSize }) => alongSize),
+      )
+      const mountingPadLength = median(
+        mountingPads.map(({ acrossSize }) => acrossSize),
+      )
+      const mountingRowCenter = median(mountingPads.map(({ across }) => across))
+      if (
+        Math.abs(mountingPads[0].across - mountingPads[1].across) >
+        Math.max(0.06, mountingPadLength * 0.1)
+      ) {
+        continue
+      }
+
+      const contactCenter = (contacts[0].along + contacts.at(-1)!.along) / 2
+      const mountingCenter = (mountingPads[0].along + mountingPads[1].along) / 2
+      if (
+        Math.abs(contactCenter - mountingCenter) >
+        Math.max(0.08, padPitch * 0.25)
+      ) {
+        continue
+      }
+
+      const mountingPadRowDistance = Math.abs(
+        mountingRowCenter - contactRowCenter,
+      )
+      if (
+        mountingPadRowDistance <=
+        Math.max(0.05, Math.min(contactAcrossSize, mountingPadLength) * 0.1)
+      ) {
+        continue
+      }
+
+      const contactPinNumbers = contacts
+        .map(pinNumber)
+        .filter((value): value is number => value !== undefined)
+        .toSorted((left, right) => left - right)
+      const signalsNumberedFirst =
+        contactPinNumbers.length === contacts.length &&
+        contactPinNumbers.every((value, index) => value === index + 1)
+      const fitScore =
+        (signalsNumberedFirst ? 0 : 10) +
+        contactAlongSpread +
+        contactAcrossSpread +
+        mountingAlongSpread +
+        mountingAcrossSpread +
+        Math.abs(contactCenter - mountingCenter) / Math.max(padPitch, 0.0001)
+
+      if (best && best.fitScore <= fitScore) continue
+      best = {
+        fitScore,
+        mountingPadLength,
+        mountingPadPitch: mountingPads[1].along - mountingPads[0].along,
+        mountingPadRowDistance,
+        mountingPadWidth,
+        mountingPadsOnTop: mountingRowCenter > contactRowCenter,
+        padLength: contactAcrossSize,
+        padPitch,
+        padWidth: median(contacts.map(({ alongSize }) => alongSize)),
+        pinCount: contacts.length,
+      }
+    }
+  }
+
+  return best
+}
+
+const analyzeJstSmd = (target: Footprint) => {
+  const analyses = [
+    analyzeJstSmdAxis(target, "x"),
+    analyzeJstSmdAxis(target, "y"),
+  ].filter((analysis): analysis is JstSmdAnalysis => analysis !== undefined)
+  return analyses.toSorted((left, right) => left.fitScore - right.fitScore)[0]
+}
 
 interface LatticeAxisFit {
   coordinates: number[]
@@ -1243,6 +1448,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     bounds,
     dpak,
     fpc: analyzeFpc(target),
+    jstSmd: analyzeJstSmd(target),
     gridColumns: xCoordinates.length,
     gridRows: yCoordinates.length,
     heuristics: {
@@ -1451,6 +1657,7 @@ const getDomainScore = (target: Footprint, family: string) => {
     dfn: ["dfn"],
     dpak: ["dpak", "to-252", "to252"],
     fpc: ["fpc", "ffc", "flat flexible"],
+    jst: ["jst", "smd p=", "smd,p=", "wire-to-board", "wire to board"],
     lga: ["lga"],
     qfn: ["qfn"],
     res: ["resistor", "res"],
@@ -1678,6 +1885,7 @@ const encodeOrientationInFootprinterString = (
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
   if (analysis.dpak) return new Set([analysis.dpak.family])
+  if (analysis.jstSmd) return new Set(["jst"])
   if (analysis.fpc) return new Set(["fpc"])
   if (analysis.rj45) return new Set(["rj45"])
   if (analysis.platedHoleCount > analysis.perimeterPadCount / 2) {
@@ -1771,6 +1979,31 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
         `span${formatPreciseLength(span)}`,
       ].join("_"),
     )
+  }
+
+  if (analysis.jstSmd) {
+    const {
+      mountingPadLength,
+      mountingPadPitch,
+      mountingPadRowDistance,
+      mountingPadWidth,
+      mountingPadsOnTop,
+      padLength,
+      padPitch,
+      padWidth,
+      pinCount,
+    } = analysis.jstSmd
+    const flags = ["smd", mountingPadsOnTop ? "mounttop" : ""].filter(Boolean)
+    const parameters = [
+      `p${formatPreciseLength(padPitch)}`,
+      `pw${formatPreciseLength(padWidth)}`,
+      `pl${formatPreciseLength(padLength)}`,
+      `mpx${formatPreciseLength(mountingPadPitch)}`,
+      `mpy${formatPreciseLength(mountingPadRowDistance)}`,
+      `mpw${formatPreciseLength(mountingPadWidth)}`,
+      `mpl${formatPreciseLength(mountingPadLength)}`,
+    ]
+    seeds.add(`jst${pinCount}_${[...flags, ...parameters].join("_")}`)
   }
 
   if (analysis.rj45) {
@@ -2164,7 +2397,12 @@ const findActiveParameters = (
   // FPC analysis emits a complete parameterization from the repeated contact
   // and mounting-pad geometry; appending duplicate generic parameters would
   // only make the result less readable.
-  if (seed.family === "fpc") return []
+  if (
+    seed.family === "fpc" ||
+    (seed.family === "jst" && seed.footprinterString.includes("_smd"))
+  ) {
+    return []
+  }
 
   const active: NumericParameter[] = []
   const baseSignature = geometrySignature(seed.footprint)

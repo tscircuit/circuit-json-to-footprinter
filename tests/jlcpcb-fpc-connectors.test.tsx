@@ -290,15 +290,15 @@ test("renders the asymmetric staggered FPC footprint", async () => {
   )
 })
 
-test("recovers C566239 SM02B-SURS without an FPC source hint", async () => {
+test("recovers C566239 SM02B-SURS as a JST-style SMD connector", async () => {
   const result = await expectFootprintRecovery({
     FootprintComponent: Sm02bSurs,
     sourceHints: ["C566239 SM02B-SURS-TF(LF)(SN) SMD P=0.8mm"],
   })
 
-  expect(result.best!.family).toBe("fpc")
+  expect(result.best!.family).toBe("jst")
   expect(result.best!.footprinterString).toBe(
-    "fpc2_p0.8mm_pw0.5mm_pl1.3mm_mpx3.4mm_mpy1.8mm_mpw1.2mm_mpl1.7mm",
+    "jst2_smd_p0.8mm_pw0.5mm_pl1.3mm_mpx3.4mm_mpy1.8mm_mpw1.2mm_mpl1.7mm",
   )
   expect(result.best!.copperIntersectionOverUnion).toBe(1)
 })
@@ -309,9 +309,9 @@ test("recovers C265284 B2B-ZR with similarly sized mounting pads", async () => {
     sourceHints: ["C265284 B2B-ZR-SM4-TF(LF)(SN) SMD P=1.5mm"],
   })
 
-  expect(result.best!.family).toBe("fpc")
+  expect(result.best!.family).toBe("jst")
   expect(result.best!.footprinterString).toBe(
-    "fpc2_mounttop_p1.5mm_pw0.7mm_pl3.8mm_mpx5.6mm_mpy2.15mm_mpw1.5mm_mpl2.3mm",
+    "jst2_smd_mounttop_p1.5mm_pw0.7mm_pl3.8mm_mpx5.6mm_mpy2.15mm_mpw1.5mm_mpl2.3mm",
   )
   expect(result.best!.copperIntersectionOverUnion).toBe(1)
 })
