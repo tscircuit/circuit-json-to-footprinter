@@ -17,6 +17,8 @@ const MAX_OPTIMIZED_SEEDS = 10
 const OPTIMIZATION_STEPS = 16
 const NUMERIC_PARAMETERS = [
   "p",
+  "px",
+  "py",
   "w",
   "h",
   "pw",
@@ -58,6 +60,7 @@ interface TargetAnalysis {
   lgaPadWidth: number
   perimeterPadCount: number
   platedHoleCount: number
+  quadSidePadCounts: QuadSidePadCounts
   sparsePinGrid?: SparsePinGridAnalysis
   usbCMidMount?: UsbCMidMountAnalysis
   thermalPad?: {
@@ -66,6 +69,13 @@ interface TargetAnalysis {
   }
   topology: Topology
   verticalSidePadCount: number
+}
+
+interface QuadSidePadCounts {
+  left: number
+  top: number
+  right: number
+  bottom: number
 }
 
 interface SparsePinGridAnalysis {
@@ -185,6 +195,8 @@ const getOrientedHeuristics = (
   return {
     ...heuristics,
     h: heuristics.w,
+    px: heuristics.py,
+    py: heuristics.px,
     w: heuristics.h,
   }
 }
@@ -199,6 +211,23 @@ const median = (values: number[]) => {
   return sorted.length % 2 === 0
     ? (sorted[middle - 1] + sorted[middle]) / 2
     : sorted[middle]
+}
+
+const getRepeatedSidePitch = (
+  sides: ShapeGeometry[][],
+  axis: "x" | "y",
+  fallback: number,
+) => {
+  const differences = sides.flatMap((side) => {
+    const coordinates = side
+      .map((pad) => pad[axis])
+      .toSorted((left, right) => left - right)
+    return coordinates
+      .slice(1)
+      .map((coordinate, index) => coordinate - coordinates[index])
+      .filter((difference) => difference > 0.015)
+  })
+  return differences.length ? median(differences) : fallback
 }
 
 const getPadBounds = (pad: ShapeGeometry): Bounds => getShapeListBounds([pad])
@@ -797,26 +826,32 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
       Math.abs(pad.y - minPadCenterY) <= tolerance ||
       Math.abs(pad.y - maxPadCenterY) <= tolerance,
   )
-  const leftSidePadCount = topologyPadEntries.filter(
+  const leftSidePads = topologyPadEntries.filter(
     ({ bounds: bound, pad }) =>
       Math.abs(pad.x - minPadCenterX) <= edgeToleranceX &&
       bound.width >= bound.height * 0.95,
-  ).length
-  const rightSidePadCount = topologyPadEntries.filter(
+  )
+  const rightSidePads = topologyPadEntries.filter(
     ({ bounds: bound, pad }) =>
       Math.abs(pad.x - maxPadCenterX) <= edgeToleranceX &&
       bound.width >= bound.height * 0.95,
-  ).length
-  const bottomSidePadCount = topologyPadEntries.filter(
+  )
+  const bottomSidePads = topologyPadEntries.filter(
     ({ bounds: bound, pad }) =>
       Math.abs(pad.y - minPadCenterY) <= edgeToleranceY &&
       bound.height >= bound.width * 0.95,
-  ).length
-  const topSidePadCount = topologyPadEntries.filter(
+  )
+  const topSidePads = topologyPadEntries.filter(
     ({ bounds: bound, pad }) =>
       Math.abs(pad.y - maxPadCenterY) <= edgeToleranceY &&
       bound.height >= bound.width * 0.95,
-  ).length
+  )
+  const quadSidePadCounts: QuadSidePadCounts = {
+    left: leftSidePads.length,
+    top: topSidePads.length,
+    right: rightSidePads.length,
+    bottom: bottomSidePads.length,
+  }
   const gridOccupancy =
     topologyPads.length / Math.max(xCoordinates.length * yCoordinates.length, 1)
   const hasPadsOnFourSides =
@@ -844,6 +879,16 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
   }
 
   const pitch = getPitchEstimate(pads, tolerance)
+  const horizontalSidePitch = getRepeatedSidePitch(
+    [topSidePads.map(({ pad }) => pad), bottomSidePads.map(({ pad }) => pad)],
+    "x",
+    pitch,
+  )
+  const verticalSidePitch = getRepeatedSidePitch(
+    [leftSidePads.map(({ pad }) => pad), rightSidePads.map(({ pad }) => pad)],
+    "y",
+    pitch,
+  )
   const medianPadLongSide = median(
     padBounds.map((bound) => Math.max(bound.width, bound.height)),
   )
@@ -882,10 +927,15 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
       pad: medianPadDiameter,
       ph: medianPadHeight,
       pl: medianPadLongSide,
+      px: horizontalSidePitch,
+      py: verticalSidePitch,
       pw: medianPadShortSide,
       w: bounds.width + insetQuadAdjustment,
     },
-    horizontalSidePadCount: Math.max(leftSidePadCount, rightSidePadCount),
+    horizontalSidePadCount: Math.max(
+      quadSidePadCounts.left,
+      quadSidePadCounts.right,
+    ),
     lgaPadLength: leftRightEdgePads.length
       ? median(leftRightEdgePads.map(({ bounds: bound }) => bound.width))
       : median(topBottomEdgePads.map(({ bounds: bound }) => bound.height)),
@@ -894,6 +944,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
       : median(topBottomEdgePads.map(({ bounds: bound }) => bound.width)),
     perimeterPadCount: sidePads.length,
     platedHoleCount,
+    quadSidePadCounts,
     sparsePinGrid,
     thermalPad: thermalPadEntry
       ? {
@@ -903,7 +954,10 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
       : undefined,
     topology,
     usbCMidMount: getUsbCMidMountGeometry(target),
-    verticalSidePadCount: Math.max(bottomSidePadCount, topSidePadCount),
+    verticalSidePadCount: Math.max(
+      quadSidePadCounts.bottom,
+      quadSidePadCounts.top,
+    ),
   }
 }
 
@@ -1329,9 +1383,41 @@ const getPreferredFamilies = (analysis: TargetAnalysis) => {
   return new Set<string>()
 }
 
+const QUAD_SIDE_PIN_FAMILIES = [
+  "lqfp",
+  "mlp",
+  "qfn",
+  "qfp",
+  "quad",
+  "tqfp",
+] as const
+
+const getQuadSidePinSuffix = (analysis: TargetAnalysis) => {
+  if (analysis.topology !== "four-sided") return undefined
+
+  const { bottom, left, right, top } = analysis.quadSidePadCounts
+  const counts = [left, top, right, bottom]
+  if (
+    counts.some((count) => !Number.isInteger(count) || count < 1) ||
+    counts.reduce((sum, count) => sum + count, 0) !==
+      analysis.perimeterPadCount ||
+    new Set(counts).size === 1
+  ) {
+    return undefined
+  }
+
+  return [
+    `leftpins${left}`,
+    `toppins${top}`,
+    `rightpins${right}`,
+    `bottompins${bottom}`,
+  ].join("_")
+}
+
 const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   const padCount = target.pads.length
   const seeds = new Set<string>()
+  const quadSidePinSuffix = getQuadSidePinSuffix(analysis)
 
   for (const family of getFootprintNames()) {
     seeds.add(`${family}${padCount}`)
@@ -1458,6 +1544,12 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     seeds.add(`fpc${pinCount}_${[...flags, ...parameters].join("_")}`)
   }
 
+  if (quadSidePinSuffix) {
+    for (const family of QUAD_SIDE_PIN_FAMILIES) {
+      seeds.add(`${family}${analysis.perimeterPadCount}_${quadSidePinSuffix}`)
+    }
+  }
+
   if (analysis.thermalPad && analysis.perimeterPadCount > 0) {
     // A 90-degree candidate rotation also rotates a non-square thermal pad.
     // Generate both source orientations so one remains aligned to the target.
@@ -1474,11 +1566,12 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
         ? ["dfn", "msop", "soic", "ssop", "tssop", "vssop"]
         : ["mlp", "qfn", "quad"]
     for (const family of thermalPadFamilies) {
-      seeds.add(`${family}${analysis.perimeterPadCount}_thermalpad`)
+      const familySeed = `${family}${analysis.perimeterPadCount}${
+        quadSidePinSuffix ? `_${quadSidePinSuffix}` : ""
+      }`
+      seeds.add(`${familySeed}_thermalpad`)
       for (const thermalPadDimensions of thermalPadDimensionOptions) {
-        seeds.add(
-          `${family}${analysis.perimeterPadCount}_thermalpad${thermalPadDimensions}`,
-        )
+        seeds.add(`${familySeed}_thermalpad${thermalPadDimensions}`)
       }
     }
   }
@@ -1680,8 +1773,15 @@ const findActiveParameters = (
   const active: NumericParameter[] = []
   const baseSignature = geometrySignature(seed.footprint)
   const heuristics = getOrientedHeuristics(seed, analysis)
+  const hasExplicitQuadSidePins = seed.footprinterString.includes("_leftpins")
 
   for (const parameter of NUMERIC_PARAMETERS) {
+    if (
+      (parameter === "px" || parameter === "py") &&
+      !hasExplicitQuadSidePins
+    ) {
+      continue
+    }
     const heuristic = Math.max(heuristics[parameter], 0.05)
     const footprint = tryBuild(
       buildParameterizedString(seed.footprinterString, {
