@@ -64,6 +64,7 @@ interface TargetAnalysis {
   platedHoleCount: number
   quadSidePadCounts: QuadSidePadCounts
   rj45?: Rj45Analysis
+  smdPushButton?: SmdPushButtonAnalysis
   smdSlideSwitch?: SmdSlideSwitchAnalysis
   sparsePinGrid?: SparsePinGridAnalysis
   usbCMidMount?: UsbCMidMountAnalysis
@@ -149,6 +150,13 @@ interface JstSmdAnalysis {
   padPitch: number
   padWidth: number
   pinCount: number
+}
+
+interface SmdPushButtonAnalysis {
+  padHeight: number
+  padWidth: number
+  pitchX: number
+  pitchY: number
 }
 
 interface SmdSlideSwitchAnalysis {
@@ -1010,6 +1018,76 @@ const analyzeSmdSlideSwitch = (target: Footprint) => {
   return analyses.toSorted((left, right) => left.fitScore - right.fitScore)[0]
 }
 
+const analyzeSmdPushButton = (
+  target: Footprint,
+): SmdPushButtonAnalysis | undefined => {
+  const description = `${target.title} ${target.subtitle} ${
+    target.sourceHints?.join(" ") ?? ""
+  }`.toLowerCase()
+  if (
+    !/(?:push\s*button|tactile\s*switch)/.test(description) &&
+    !/\b(?:ts[-_ ]?\d{4}[a-z]?|skrp[a-z0-9]*)\b/.test(description)
+  ) {
+    return undefined
+  }
+
+  const pads = getPadGeometries(target)
+  if (
+    pads.length !== 4 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" || drill || copper.shape !== "rect",
+    )
+  ) {
+    return undefined
+  }
+
+  const padBounds = pads.map(({ copper }) => getPadBounds(copper))
+  const padWidths = padBounds.map(({ width }) => width)
+  const padHeights = padBounds.map(({ height }) => height)
+  const padWidth = median(padWidths)
+  const padHeight = median(padHeights)
+  if (
+    (Math.max(...padWidths) - Math.min(...padWidths)) /
+      Math.max(padWidth, 0.0001) >
+      0.12 ||
+    (Math.max(...padHeights) - Math.min(...padHeights)) /
+      Math.max(padHeight, 0.0001) >
+      0.12
+  ) {
+    return undefined
+  }
+
+  const xTolerance = Math.max(0.04, padWidth * 0.1)
+  const yTolerance = Math.max(0.04, padHeight * 0.1)
+  const columns = clusterCoordinates(
+    pads.map(({ copper }) => copper.x),
+    xTolerance,
+  )
+  const rows = clusterCoordinates(
+    pads.map(({ copper }) => copper.y),
+    yTolerance,
+  )
+  if (columns.length !== 2 || rows.length !== 2) return undefined
+
+  for (const column of columns) {
+    for (const row of rows) {
+      const matchingPads = pads.filter(
+        ({ copper }) =>
+          Math.abs(copper.x - column) <= xTolerance &&
+          Math.abs(copper.y - row) <= yTolerance,
+      )
+      if (matchingPads.length !== 1) return undefined
+    }
+  }
+
+  const pitchX = columns[1] - columns[0]
+  const pitchY = rows[1] - rows[0]
+  if (pitchX <= padWidth || pitchY <= padHeight) return undefined
+
+  return { padHeight, padWidth, pitchX, pitchY }
+}
+
 const analyzeSparsePinGrid = (
   target: Footprint,
   clusterTolerance: number,
@@ -1728,6 +1806,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     platedHoleCount,
     quadSidePadCounts,
     rj45,
+    smdPushButton: analyzeSmdPushButton(target),
     smdSlideSwitch: analyzeSmdSlideSwitch(target),
     sparsePinGrid,
     thermalPad: thermalPadEntry
@@ -1916,6 +1995,7 @@ const getDomainScore = (target: Footprint, family: string) => {
     tssop: ["tssop"],
     usbcmidmount: ["usb-c", "usb c", "type-c", "type c", "usbc"],
     rj45: ["rj45", "ethernet", "8p8c"],
+    smdpushbutton: ["push button", "pushbutton", "tactile switch"],
     smdslideswitch: ["slide switch", "slideswitch", "msk12"],
   }
   const terms = aliases[family] ?? [family]
@@ -2136,6 +2216,7 @@ const encodeOrientationInFootprinterString = (
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
   if (analysis.dpak) return new Set([analysis.dpak.family])
+  if (analysis.smdPushButton) return new Set(["smdpushbutton"])
   if (analysis.smdSlideSwitch) return new Set(["smdslideswitch"])
   if (analysis.jstSmd) return new Set(["jst"])
   if (analysis.fpc) return new Set(["fpc"])
@@ -2298,6 +2379,19 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
         : "",
     ].filter(Boolean)
     seeds.add(`smdslideswitch7_${parameters.join("_")}`)
+  }
+
+  if (analysis.smdPushButton) {
+    const { padHeight, padWidth, pitchX, pitchY } = analysis.smdPushButton
+    seeds.add(
+      [
+        "smdpushbutton4",
+        `px${formatLength(pitchX)}`,
+        `py${formatLength(pitchY)}`,
+        `pw${formatLength(padWidth)}`,
+        `ph${formatLength(padHeight)}`,
+      ].join("_"),
+    )
   }
 
   if (analysis.rj45) {
