@@ -64,6 +64,7 @@ interface TargetAnalysis {
   platedHoleCount: number
   quadSidePadCounts: QuadSidePadCounts
   rj45?: Rj45Analysis
+  smtPadPair?: SmtPadPairAnalysis
   smdPushButton?: SmdPushButtonAnalysis
   smdSlideSwitch?: SmdSlideSwitchAnalysis
   sparsePinGrid?: SparsePinGridAnalysis
@@ -157,6 +158,15 @@ interface JstSmdAnalysis {
 interface SmdPushButtonAnalysis {
   padHeight: number
   padWidth: number
+  pitchX: number
+  pitchY: number
+}
+
+interface SmtPadPairAnalysis {
+  p1Height: number
+  p1Width: number
+  p2Height: number
+  p2Width: number
   pitchX: number
   pitchY: number
 }
@@ -1808,6 +1818,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     platedHoleCount,
     quadSidePadCounts,
     rj45,
+    smtPadPair: analyzeSmtPadPair(target),
     smdPushButton: analyzeSmdPushButton(target),
     smdSlideSwitch: analyzeSmdSlideSwitch(target),
     sparsePinGrid,
@@ -1825,6 +1836,54 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
       quadSidePadCounts.bottom,
       quadSidePadCounts.top,
     ),
+  }
+}
+
+const analyzeSmtPadPair = (
+  target: Footprint,
+): SmtPadPairAnalysis | undefined => {
+  const pads = getPadGeometries(target)
+  if (
+    pads.length !== 2 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" ||
+        drill !== undefined ||
+        copper.shape !== "rect" ||
+        (copper.cornerRadius ?? 0) > 0 ||
+        Math.abs(copper.rotation % 90) > 0.00001,
+    )
+  ) {
+    return undefined
+  }
+
+  const pinNumber = ({ element }: PcbPadGeometry) => {
+    for (const hint of element.port_hints ?? []) {
+      const match = hint.trim().match(/^(?:pin)?([12])$/i)
+      if (match?.[1]) return Number.parseInt(match[1], 10)
+    }
+    return undefined
+  }
+  const pin1 = pads.find((pad) => pinNumber(pad) === 1)
+  const pin2 = pads.find((pad) => pinNumber(pad) === 2)
+  const ordered =
+    pin1 && pin2
+      ? [pin1, pin2]
+      : pads.toSorted(
+          (left, right) =>
+            left.copper.x - right.copper.x || left.copper.y - right.copper.y,
+        )
+  const [first, second] = ordered
+  const firstBounds = getPadBounds(first.copper)
+  const secondBounds = getPadBounds(second.copper)
+
+  return {
+    p1Height: firstBounds.height,
+    p1Width: firstBounds.width,
+    p2Height: secondBounds.height,
+    p2Width: secondBounds.width,
+    pitchX: second.copper.x - first.copper.x,
+    pitchY: second.copper.y - first.copper.y,
   }
 }
 
@@ -2276,6 +2335,7 @@ const encodeOrientationInFootprinterString = (
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
   if (analysis.dpak) return new Set([analysis.dpak.family])
+  if (analysis.smtPadPair) return new Set(["smtpadpair"])
   if (analysis.smdPushButton) return new Set(["smdpushbutton"])
   if (analysis.smdSlideSwitch) return new Set(["smdslideswitch"])
   if (analysis.jstSmd) return new Set(["jst"])
@@ -2452,6 +2512,24 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
         `ph${formatLength(padHeight)}`,
       ].join("_"),
     )
+  }
+
+  if (analysis.smtPadPair) {
+    const { p1Height, p1Width, p2Height, p2Width, pitchX, pitchY } =
+      analysis.smtPadPair
+    const parameters = [
+      `px${formatPitchLength(pitchX)}`,
+      roundToFiveMicrometers(pitchY) === 0
+        ? ""
+        : `py${formatPitchLength(pitchY)}`,
+      formatLength(p1Width) === formatLength(p2Width)
+        ? `pw${formatLength(p1Width)}`
+        : `p1w${formatLength(p1Width)}_p2w${formatLength(p2Width)}`,
+      formatLength(p1Height) === formatLength(p2Height)
+        ? `ph${formatLength(p1Height)}`
+        : `p1h${formatLength(p1Height)}_p2h${formatLength(p2Height)}`,
+    ].filter(Boolean)
+    seeds.add(`smtpadpair_${parameters.join("_")}`)
   }
 
   if (analysis.rj45) {
