@@ -64,6 +64,7 @@ interface TargetAnalysis {
   platedHoleCount: number
   quadSidePadCounts: QuadSidePadCounts
   rj45?: Rj45Analysis
+  smdSlideSwitch?: SmdSlideSwitchAnalysis
   sparsePinGrid?: SparsePinGridAnalysis
   usbCMidMount?: UsbCMidMountAnalysis
   thermalPad?: {
@@ -148,6 +149,24 @@ interface JstSmdAnalysis {
   padPitch: number
   padWidth: number
   pinCount: number
+}
+
+interface SmdSlideSwitchAnalysis {
+  fitScore: number
+  holeDiameter?: number
+  holeX?: number
+  holeY?: number
+  missingColumns: number[]
+  mountY: number
+  mountingPadPitchX: number
+  mountingPadPitchY: number
+  mountingPadLength: number
+  mountingPadWidth: number
+  noHoles: boolean
+  padLength: number
+  padPitch: number
+  padWidth: number
+  signalColumnCount: number
 }
 
 interface UsbCMidMountAnalysis {
@@ -759,6 +778,236 @@ const fitLatticeAxis = (
   if (!best) return undefined
   const { score: _score, ...fit } = best
   return fit
+}
+
+const analyzeSmdSlideSwitchAxis = (
+  target: Footprint,
+  alongAxis: "x" | "y",
+): SmdSlideSwitchAnalysis | undefined => {
+  const description = `${target.title} ${target.subtitle} ${
+    target.sourceHints?.join(" ") ?? ""
+  }`.toLowerCase()
+  if (
+    !/slide[- ]?switch/.test(description) &&
+    !/\bmsk[-_ ]?\d/.test(description)
+  ) {
+    return undefined
+  }
+
+  const pads = getPadGeometries(target)
+  const holes = getHoleGeometries(target)
+  if (
+    pads.length !== 7 ||
+    (holes.length !== 0 && holes.length !== 2) ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" ||
+        drill ||
+        (copper.shape !== "rect" && copper.shape !== "pill"),
+    ) ||
+    holes.some((hole) => hole.shape !== "circle")
+  ) {
+    return undefined
+  }
+
+  const acrossAxis = alongAxis === "x" ? "y" : "x"
+  const entries = pads.map((pad, index) => {
+    const bounds = getPadBounds(pad.copper)
+    return {
+      across: pad.copper[acrossAxis],
+      acrossSize: alongAxis === "x" ? bounds.height : bounds.width,
+      along: pad.copper[alongAxis],
+      alongSize: alongAxis === "x" ? bounds.width : bounds.height,
+      index,
+      pad,
+    }
+  })
+  const relativeSpread = (values: number[]) => {
+    const middle = Math.max(median(values), 0.0001)
+    return (Math.max(...values) - Math.min(...values)) / middle
+  }
+  const pinNumber = ({ pad }: (typeof entries)[number]) => {
+    for (const hint of pad.element.port_hints ?? []) {
+      const match = hint.trim().match(/^(?:pin)?(\d+)$/i)
+      if (match?.[1]) return Number.parseInt(match[1], 10)
+    }
+    return undefined
+  }
+
+  const signalIndexSets: number[][] = []
+  for (let first = 0; first < entries.length - 2; first += 1) {
+    for (let second = first + 1; second < entries.length - 1; second += 1) {
+      for (let third = second + 1; third < entries.length; third += 1) {
+        signalIndexSets.push([first, second, third])
+      }
+    }
+  }
+
+  let best: SmdSlideSwitchAnalysis | undefined
+  for (const signalIndices of signalIndexSets) {
+    const signalIndexSet = new Set(signalIndices)
+    const signals = entries
+      .filter(({ index }) => signalIndexSet.has(index))
+      .toSorted((left, right) => left.along - right.along)
+    const mounts = entries.filter(({ index }) => !signalIndexSet.has(index))
+    const signalAlongSpread = relativeSpread(
+      signals.map(({ alongSize }) => alongSize),
+    )
+    const signalAcrossSpread = relativeSpread(
+      signals.map(({ acrossSize }) => acrossSize),
+    )
+    if (signalAlongSpread > 0.12 || signalAcrossSpread > 0.12) continue
+
+    const signalRowCenter = median(signals.map(({ across }) => across))
+    const signalAcrossSize = median(signals.map(({ acrossSize }) => acrossSize))
+    const rowTolerance = Math.max(0.04, signalAcrossSize * 0.08)
+    if (
+      signals.some(
+        ({ across }) => Math.abs(across - signalRowCenter) > rowTolerance,
+      )
+    ) {
+      continue
+    }
+
+    const signalAlongSize = median(signals.map(({ alongSize }) => alongSize))
+    const lattice = fitLatticeAxis(
+      signals.map(({ along }) => along),
+      Math.max(0.015, signalAlongSize * 0.04),
+      Math.max(0.025, signalAlongSize * 0.08),
+    )
+    if (!lattice || lattice.count > 6) continue
+    const missingColumns = Array.from(
+      { length: lattice.count },
+      (_, index) => index + 1,
+    ).filter((column) => !lattice.indices.includes(column - 1))
+    if (missingColumns.length > 3) continue
+
+    const mountAlongSpread = relativeSpread(
+      mounts.map(({ alongSize }) => alongSize),
+    )
+    const mountAcrossSpread = relativeSpread(
+      mounts.map(({ acrossSize }) => acrossSize),
+    )
+    if (mountAlongSpread > 0.15 || mountAcrossSpread > 0.15) continue
+
+    const mountAlongSize = median(mounts.map(({ alongSize }) => alongSize))
+    const mountAcrossSize = median(mounts.map(({ acrossSize }) => acrossSize))
+    const mountAlongTolerance = Math.max(0.04, mountAlongSize * 0.1)
+    const mountAcrossTolerance = Math.max(0.04, mountAcrossSize * 0.1)
+    const mountColumns = clusterCoordinates(
+      mounts.map(({ along }) => along),
+      mountAlongTolerance,
+    )
+    const mountRows = clusterCoordinates(
+      mounts.map(({ across }) => across),
+      mountAcrossTolerance,
+    )
+    if (mountColumns.length !== 2 || mountRows.length !== 2) continue
+    if (
+      mountColumns.some(
+        (column) =>
+          mounts.filter(
+            ({ along }) => Math.abs(along - column) <= mountAlongTolerance,
+          ).length !== 2,
+      ) ||
+      mountRows.some(
+        (row) =>
+          mounts.filter(
+            ({ across }) => Math.abs(across - row) <= mountAcrossTolerance,
+          ).length !== 2,
+      )
+    ) {
+      continue
+    }
+
+    const signalLatticeCenter =
+      lattice.coordinates[0] + ((lattice.count - 1) * lattice.pitch) / 2
+    const mountColumnCenter = (mountColumns[0] + mountColumns[1]) / 2
+    const centerError = Math.abs(signalLatticeCenter - mountColumnCenter)
+    if (centerError > Math.max(0.06, lattice.pitch * 0.12)) continue
+
+    const mountCenter = (mountRows[0] + mountRows[1]) / 2
+    const mountingPadPitchX = mountColumns[1] - mountColumns[0]
+    const mountingPadPitchY = mountRows[1] - mountRows[0]
+    if (
+      mountingPadPitchX <= mountAlongSize ||
+      mountingPadPitchY <= mountAcrossSize
+    ) {
+      continue
+    }
+
+    let holeDiameter: number | undefined
+    let holeX: number | undefined
+    let holeY: number | undefined
+    let holeFitError = 0
+    if (holes.length === 2) {
+      const holeEntries = holes
+        .map((hole) => ({
+          across: hole[acrossAxis],
+          along: hole[alongAxis],
+          diameter: (hole.width + hole.height) / 2,
+        }))
+        .toSorted((left, right) => left.along - right.along)
+      holeDiameter = median(holeEntries.map(({ diameter }) => diameter))
+      const holeAcrossDifference = Math.abs(
+        holeEntries[1].across - holeEntries[0].across,
+      )
+      if (holeAcrossDifference > Math.max(0.04, holeDiameter * 0.08)) continue
+      const holeCenter = (holeEntries[0].along + holeEntries[1].along) / 2
+      holeFitError = Math.abs(holeCenter - signalLatticeCenter)
+      if (holeFitError > Math.max(0.05, holeDiameter * 0.1)) continue
+      holeX = (holeEntries[1].along - holeEntries[0].along) / 2
+      holeY =
+        (holeEntries[0].across + holeEntries[1].across) / 2 - signalRowCenter
+    }
+
+    const signalPinNumbers = signals
+      .map(pinNumber)
+      .filter((value): value is number => value !== undefined)
+      .toSorted((left, right) => left - right)
+    const signalsNumberedFirst =
+      signalPinNumbers.length === signals.length &&
+      signalPinNumbers.every((value, index) => value === index + 1)
+    const fitScore =
+      (signalsNumberedFirst ? 0 : 5) +
+      signalAlongSpread +
+      signalAcrossSpread +
+      mountAlongSpread +
+      mountAcrossSpread +
+      centerError / Math.max(lattice.pitch, 0.0001) +
+      holeFitError / Math.max(holeDiameter ?? 1, 0.0001)
+    if (best && best.fitScore <= fitScore) continue
+
+    best = {
+      fitScore,
+      holeDiameter,
+      holeX,
+      holeY,
+      missingColumns,
+      mountY: mountCenter - signalRowCenter,
+      mountingPadLength: mountAcrossSize,
+      mountingPadPitchX,
+      mountingPadPitchY,
+      mountingPadWidth: mountAlongSize,
+      noHoles: holes.length === 0,
+      padLength: signalAcrossSize,
+      padPitch: lattice.pitch,
+      padWidth: signalAlongSize,
+      signalColumnCount: lattice.count,
+    }
+  }
+
+  return best
+}
+
+const analyzeSmdSlideSwitch = (target: Footprint) => {
+  const analyses = [
+    analyzeSmdSlideSwitchAxis(target, "x"),
+    analyzeSmdSlideSwitchAxis(target, "y"),
+  ].filter(
+    (analysis): analysis is SmdSlideSwitchAnalysis => analysis !== undefined,
+  )
+  return analyses.toSorted((left, right) => left.fitScore - right.fitScore)[0]
 }
 
 const analyzeSparsePinGrid = (
@@ -1479,6 +1728,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     platedHoleCount,
     quadSidePadCounts,
     rj45,
+    smdSlideSwitch: analyzeSmdSlideSwitch(target),
     sparsePinGrid,
     thermalPad: thermalPadEntry
       ? {
@@ -1666,6 +1916,7 @@ const getDomainScore = (target: Footprint, family: string) => {
     tssop: ["tssop"],
     usbcmidmount: ["usb-c", "usb c", "type-c", "type c", "usbc"],
     rj45: ["rj45", "ethernet", "8p8c"],
+    smdslideswitch: ["slide switch", "slideswitch", "msk12"],
   }
   const terms = aliases[family] ?? [family]
   return terms.some((term) => description.includes(term)) ? 1 : 0
@@ -1885,6 +2136,7 @@ const encodeOrientationInFootprinterString = (
 
 const getPreferredFamilies = (analysis: TargetAnalysis) => {
   if (analysis.dpak) return new Set([analysis.dpak.family])
+  if (analysis.smdSlideSwitch) return new Set(["smdslideswitch"])
   if (analysis.jstSmd) return new Set(["jst"])
   if (analysis.fpc) return new Set(["fpc"])
   if (analysis.rj45) return new Set(["rj45"])
@@ -2004,6 +2256,48 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       `mpl${formatPreciseLength(mountingPadLength)}`,
     ]
     seeds.add(`jst${pinCount}_${[...flags, ...parameters].join("_")}`)
+  }
+
+  if (analysis.smdSlideSwitch) {
+    const {
+      holeDiameter,
+      holeX,
+      holeY,
+      missingColumns,
+      mountY,
+      mountingPadLength,
+      mountingPadPitchX,
+      mountingPadPitchY,
+      mountingPadWidth,
+      noHoles,
+      padLength,
+      padPitch,
+      padWidth,
+      signalColumnCount,
+    } = analysis.smdSlideSwitch
+    const parameters = [
+      signalColumnCount === 3 ? "" : `signalcols${signalColumnCount}`,
+      missingColumns.length ? `missing(${missingColumns.join(",")})` : "",
+      `p${formatPreciseLength(padPitch)}`,
+      `pw${formatPreciseLength(padWidth)}`,
+      `pl${formatPreciseLength(padLength)}`,
+      `mounty${formatPreciseLength(mountY)}`,
+      `mpx${formatPreciseLength(mountingPadPitchX)}`,
+      `mpy${formatPreciseLength(mountingPadPitchY)}`,
+      `mpw${formatPreciseLength(mountingPadWidth)}`,
+      `mpl${formatPreciseLength(mountingPadLength)}`,
+      noHoles ? "noholes" : "",
+      !noHoles && holeX !== undefined
+        ? `holex${formatPreciseLength(holeX)}`
+        : "",
+      !noHoles && holeY !== undefined
+        ? `holey${formatPreciseLength(holeY)}`
+        : "",
+      !noHoles && holeDiameter !== undefined
+        ? `holed${formatPreciseLength(holeDiameter)}`
+        : "",
+    ].filter(Boolean)
+    seeds.add(`smdslideswitch7_${parameters.join("_")}`)
   }
 
   if (analysis.rj45) {
