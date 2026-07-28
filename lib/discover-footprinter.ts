@@ -71,6 +71,8 @@ interface TargetAnalysis {
   thermalPad?: {
     height: number
     width: number
+    xOffset: number
+    yOffset: number
   }
   topology: Topology
   verticalSidePadCount: number
@@ -1813,6 +1815,8 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
       ? {
           height: thermalPadEntry.bound.height,
           width: thermalPadEntry.bound.width,
+          xOffset: thermalPadEntry.pad.x - topologyCenterX,
+          yOffset: thermalPadEntry.pad.y - topologyCenterY,
         }
       : undefined,
     topology,
@@ -2068,6 +2072,41 @@ const buildParameterizedString = (
     return [`${parameter}${formattedValue}`]
   }).join("_")
   return suffix ? `${seed}_${suffix}` : seed
+}
+
+const addThermalPadOffsetForRotation = (
+  footprinterString: string,
+  thermalPad: TargetAnalysis["thermalPad"],
+  searchRotation: FootprintRotation,
+) => {
+  if (!thermalPad || !footprinterString.includes("_thermalpad")) {
+    return footprinterString
+  }
+
+  const sourceOffset =
+    searchRotation === 0
+      ? { x: thermalPad.xOffset, y: thermalPad.yOffset }
+      : searchRotation === 90
+        ? { x: thermalPad.yOffset, y: -thermalPad.xOffset }
+        : searchRotation === 180
+          ? { x: -thermalPad.xOffset, y: -thermalPad.yOffset }
+          : { x: -thermalPad.yOffset, y: thermalPad.xOffset }
+  const roundedXOffset = roundToFiveMicrometers(sourceOffset.x)
+  const roundedYOffset = roundToFiveMicrometers(sourceOffset.y)
+  const offsetSuffix = [
+    roundedXOffset !== 0
+      ? `thermalpadx${formatPitchLength(roundedXOffset)}`
+      : "",
+    roundedYOffset !== 0
+      ? `thermalpady${formatPitchLength(roundedYOffset)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("_")
+
+  return offsetSuffix
+    ? `${footprinterString}_${offsetSuffix}`
+    : footprinterString
 }
 
 const geometrySignature = (footprint: Footprint) => {
@@ -3049,15 +3088,25 @@ export const discoverFootprinterString = (
   const analysis = analyzeTarget(target)
   const rawSeeds = generateSeeds(target, analysis)
   const seedCandidates = rawSeeds.flatMap((footprinterString) => {
-    const unrotatedFootprint = tryBuild(footprinterString)
+    const baseUnrotatedFootprint = tryBuild(footprinterString)
     if (
-      !unrotatedFootprint ||
-      unrotatedFootprint.pads.length !== target.pads.length
+      !baseUnrotatedFootprint ||
+      baseUnrotatedFootprint.pads.length !== target.pads.length
     ) {
       return []
     }
 
     return FOOTPRINT_ROTATIONS.flatMap((searchRotation): SeedCandidate[] => {
+      const offsetFootprinterString = addThermalPadOffsetForRotation(
+        footprinterString,
+        analysis.thermalPad,
+        searchRotation,
+      )
+      const unrotatedFootprint =
+        offsetFootprinterString === footprinterString
+          ? baseUnrotatedFootprint
+          : tryBuild(offsetFootprinterString)
+      if (!unrotatedFootprint) return []
       const footprint = rotateFootprint(unrotatedFootprint, searchRotation)
       const platedHoleCount = footprint.pads.filter(
         (pad) => pad.type === "pcb_plated_hole",
@@ -3067,7 +3116,7 @@ export const discoverFootprinterString = (
       return [
         {
           family: getFamily(footprinterString),
-          footprinterString,
+          footprinterString: offsetFootprinterString,
           geometryScore: getGeometryScore(footprint, target),
           footprint,
           searchRotation,
