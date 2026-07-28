@@ -1945,11 +1945,27 @@ const tryBuild = (footprinterString: string) => {
   }
 }
 
+const roundToFiveMicrometers = (value: number) =>
+  Number((Math.round(value * 200) / 200).toFixed(3))
+
 const roundToTenMicrometers = (value: number) =>
   Number((Math.round(value * 100) / 100).toFixed(2))
 
+const roundOptimizedParameter = (parameter: NumericParameter, value: number) =>
+  parameter === "p" || parameter === "px" || parameter === "py"
+    ? roundToFiveMicrometers(value)
+    : roundToTenMicrometers(value)
+
 export const formatLength = (value: number) => {
   const millimeters = roundToTenMicrometers(value)
+  if (millimeters > 0 && millimeters < 0.1) {
+    return `${Math.round(millimeters * 1_000)}um`
+  }
+  return `${millimeters}mm`
+}
+
+const formatPitchLength = (value: number) => {
+  const millimeters = roundToFiveMicrometers(value)
   if (millimeters > 0 && millimeters < 0.1) {
     return `${Math.round(millimeters * 1_000)}um`
   }
@@ -1964,7 +1980,12 @@ const buildParameterizedString = (
 ) => {
   const suffix = NUMERIC_PARAMETERS.flatMap((parameter) => {
     const value = parameters[parameter]
-    return value === undefined ? [] : [`${parameter}${formatLength(value)}`]
+    if (value === undefined) return []
+    const formattedValue =
+      parameter === "p" || parameter === "px" || parameter === "py"
+        ? formatPitchLength(value)
+        : formatLength(value)
+    return [`${parameter}${formattedValue}`]
   }).join("_")
   return suffix ? `${seed}_${suffix}` : seed
 }
@@ -2823,18 +2844,21 @@ const optimizeSeed = (
     if (current && (!best || current.loss < best.loss)) best = current
   }
 
-  // Footprinter strings are emitted at 0.01 mm precision, so the continuous
-  // gradient search above can stop next to the best representable footprint.
-  // Refine the emitted values directly; this is especially important for
-  // small SOT/DFN pads where one 0.01 mm step materially changes overlap.
+  // Pitch parameters support 0.005 mm precision, so the continuous gradient
+  // search above can stop next to the best representable footprint. Other
+  // dimensions retain the stable 0.01 mm optimizer grid. No emitted parameter
+  // uses sub-5-micrometer precision.
   if (best) {
     type EvaluatedSeed = NonNullable<ReturnType<typeof evaluate>>
     let refined: EvaluatedSeed | null = evaluate(
       Object.fromEntries(
-        Object.entries(best.parameters).map(([parameter, value]) => [
-          parameter,
-          roundToTenMicrometers(value),
-        ]),
+        Object.entries(best.parameters).map(([parameter, value]) => {
+          const numericParameter = parameter as NumericParameter
+          return [
+            numericParameter,
+            roundOptimizedParameter(numericParameter, value),
+          ]
+        }),
       ) as Partial<Record<NumericParameter, number>>,
     )
 
@@ -2852,7 +2876,7 @@ const optimizeSeed = (
           const candidate = evaluate({
             ...baseline.parameters,
             [parameter]: Math.max(
-              roundToTenMicrometers(currentValue + delta),
+              roundOptimizedParameter(parameter, currentValue + delta),
               0.025,
             ),
           })
@@ -2880,10 +2904,13 @@ const optimizeSeed = (
   }
 
   const simplifiedParameters = Object.fromEntries(
-    Object.entries(best.parameters).map(([parameter, value]) => [
-      parameter,
-      roundToTenMicrometers(value),
-    ]),
+    Object.entries(best.parameters).map(([parameter, value]) => {
+      const numericParameter = parameter as NumericParameter
+      return [
+        numericParameter,
+        roundOptimizedParameter(numericParameter, value),
+      ]
+    }),
   ) as Partial<Record<NumericParameter, number>>
   const bestSignature = geometrySignature(best.footprint)
   for (const parameter of activeParameters) {

@@ -158,7 +158,7 @@ test("uses micrometer units only for dimensions below 0.1mm", () => {
   expect(formatLength(1.3)).toBe("1.3mm")
 })
 
-test("rounds dimensions to the nearest 10 micrometers", () => {
+test("rounds general dimensions to the nearest 10 micrometers", () => {
   expect(formatLength(0.054)).toBe("50um")
   expect(formatLength(0.056)).toBe("60um")
   expect(formatLength(0.554)).toBe("0.55mm")
