@@ -2095,10 +2095,10 @@ const addThermalPadOffsetForRotation = (
   const roundedYOffset = roundToFiveMicrometers(sourceOffset.y)
   const offsetSuffix = [
     roundedXOffset !== 0
-      ? `thermalpadx${formatPitchLength(roundedXOffset)}`
+      ? `thermalpadcenteroffsetx${formatPitchLength(roundedXOffset)}`
       : "",
     roundedYOffset !== 0
-      ? `thermalpady${formatPitchLength(roundedYOffset)}`
+      ? `thermalpadcenteroffsety${formatPitchLength(roundedYOffset)}`
       : "",
   ]
     .filter(Boolean)

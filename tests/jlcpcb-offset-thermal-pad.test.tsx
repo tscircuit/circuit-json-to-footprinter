@@ -60,7 +60,9 @@ test("recovers C5310961 with an offset rectangular thermal pad", async () => {
     sourceHints: ["C5310961 AON7403 PDFN-8"],
   })
 
-  expect(result.best!.footprinterString).toMatch(/thermalpad[xy](?:-)?0\.35mm/)
+  expect(result.best!.footprinterString).toMatch(
+    /thermalpadcenteroffset[xy](?:-)?0\.35mm/,
+  )
   expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)
 }, 30_000)
 
