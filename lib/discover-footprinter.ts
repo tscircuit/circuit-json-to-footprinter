@@ -1026,13 +1026,6 @@ const analyzeSmdPushButton = (
   const description = `${target.title} ${target.subtitle} ${
     target.sourceHints?.join(" ") ?? ""
   }`.toLowerCase()
-  if (
-    !/(?:push\s*button|tactile\s*switch)/.test(description) &&
-    !/\b(?:ts[-_ ]?\d{4}[a-z]?|skrp[a-z0-9]*)\b/.test(description)
-  ) {
-    return undefined
-  }
-
   const pads = getPadGeometries(target)
   if (
     pads.length !== 4 ||
@@ -1086,6 +1079,13 @@ const analyzeSmdPushButton = (
   const pitchX = columns[1] - columns[0]
   const pitchY = rows[1] - rows[0]
   if (pitchX <= padWidth || pitchY <= padHeight) return undefined
+
+  const hasSwitchHint =
+    /(?:push\s*button|tactile\s*switch)/.test(description) ||
+    /\b(?:ts[-_ ]?\d{4}[a-z]?|skrp[a-z0-9]*)\b/.test(description)
+  const hasLargeSwitchGeometry =
+    pitchX >= 10 && pitchY >= 4 && padWidth >= 2 && padHeight >= 1
+  if (!hasSwitchHint && !hasLargeSwitchGeometry) return undefined
 
   return { padHeight, padWidth, pitchX, pitchY }
 }
@@ -2036,7 +2036,10 @@ const roundToTenMicrometers = (value: number) =>
   Number((Math.round(value * 100) / 100).toFixed(2))
 
 const roundOptimizedParameter = (parameter: NumericParameter, value: number) =>
-  parameter === "p" || parameter === "px" || parameter === "py"
+  parameter === "p" ||
+  parameter === "px" ||
+  parameter === "py" ||
+  parameter === "pad"
     ? roundToFiveMicrometers(value)
     : roundToTenMicrometers(value)
 
@@ -2066,7 +2069,10 @@ const buildParameterizedString = (
     const value = parameters[parameter]
     if (value === undefined) return []
     const formattedValue =
-      parameter === "p" || parameter === "px" || parameter === "py"
+      parameter === "p" ||
+      parameter === "px" ||
+      parameter === "py" ||
+      parameter === "pad"
         ? formatPitchLength(value)
         : formatLength(value)
     return [`${parameter}${formattedValue}`]
@@ -2450,6 +2456,165 @@ const getSot223Seed = (target: Footprint) => {
   return undefined
 }
 
+const getBgaGridSeed = (target: Footprint) => {
+  const pads = getPadGeometries(target)
+  if (
+    pads.length < 4 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" || drill || copper.shape !== "rect",
+    )
+  ) {
+    return undefined
+  }
+
+  const bounds = pads.map(({ copper }) => getPadBounds(copper))
+  const pad = median(bounds.map(({ width, height }) => (width + height) / 2))
+  const tolerance = Math.max(0.005, pad * 0.08)
+  if (
+    bounds.some(
+      ({ width, height }) =>
+        Math.abs(width - height) > tolerance ||
+        Math.abs(width - pad) > tolerance ||
+        Math.abs(height - pad) > tolerance,
+    )
+  ) {
+    return undefined
+  }
+
+  const columns = clusterCoordinates(
+    pads.map(({ copper }) => copper.x),
+    tolerance,
+  )
+  const rows = clusterCoordinates(
+    pads.map(({ copper }) => copper.y),
+    tolerance,
+  )
+  if (
+    columns.length < 2 ||
+    rows.length < 2 ||
+    columns.length * rows.length !== pads.length
+  ) {
+    return undefined
+  }
+
+  const columnPitches = columns
+    .slice(1)
+    .map((coordinate, index) => coordinate - columns[index]!)
+  const rowPitches = rows
+    .slice(1)
+    .map((coordinate, index) => coordinate - rows[index]!)
+  const pitch = median([...columnPitches, ...rowPitches])
+  if (
+    pitch <= pad ||
+    [...columnPitches, ...rowPitches].some(
+      (candidate) => Math.abs(candidate - pitch) > tolerance,
+    )
+  ) {
+    return undefined
+  }
+
+  for (const column of columns) {
+    for (const row of rows) {
+      if (
+        pads.filter(
+          ({ copper }) =>
+            Math.abs(copper.x - column) <= tolerance &&
+            Math.abs(copper.y - row) <= tolerance,
+        ).length !== 1
+      ) {
+        return undefined
+      }
+    }
+  }
+
+  return `bga${pads.length}_grid${columns.length}x${rows.length}_p${formatPreciseLength(pitch)}_pad${formatPreciseLength(pad)}`
+}
+
+const getTwoSidedDfnSeed = (target: Footprint) => {
+  const pads = getPadGeometries(target)
+  if (
+    pads.length < 4 ||
+    pads.length % 2 !== 0 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" || drill || copper.shape !== "rect",
+    )
+  ) {
+    return undefined
+  }
+
+  for (const [crossAxis, alongAxis] of [
+    ["x", "y"],
+    ["y", "x"],
+  ] as const) {
+    const bounds = pads.map(({ copper }) => getPadBounds(copper))
+    const padLength = median(
+      bounds.map((bound) => bound[crossAxis === "x" ? "width" : "height"]),
+    )
+    const padWidth = median(
+      bounds.map((bound) => bound[alongAxis === "x" ? "width" : "height"]),
+    )
+    const tolerance = Math.max(0.01, Math.min(padLength, padWidth) * 0.1)
+    if (
+      bounds.some(
+        (bound) =>
+          Math.abs(bound[crossAxis === "x" ? "width" : "height"] - padLength) >
+            tolerance ||
+          Math.abs(bound[alongAxis === "x" ? "width" : "height"] - padWidth) >
+            tolerance,
+      )
+    ) {
+      continue
+    }
+
+    const crossCoordinates = clusterCoordinates(
+      pads.map(({ copper }) => copper[crossAxis]),
+      tolerance,
+    )
+    const alongCoordinates = clusterCoordinates(
+      pads.map(({ copper }) => copper[alongAxis]),
+      tolerance,
+    )
+    if (
+      crossCoordinates.length !== 2 ||
+      alongCoordinates.length !== pads.length / 2
+    ) {
+      continue
+    }
+
+    if (
+      crossCoordinates.some(
+        (crossCoordinate) =>
+          pads.filter(
+            ({ copper }) =>
+              Math.abs(copper[crossAxis] - crossCoordinate) <= tolerance,
+          ).length !==
+          pads.length / 2,
+      )
+    ) {
+      continue
+    }
+
+    const pitches = alongCoordinates
+      .slice(1)
+      .map((coordinate, index) => coordinate - alongCoordinates[index]!)
+    const pitch = median(pitches)
+    if (
+      pitch <= padWidth ||
+      pitches.some((candidate) => Math.abs(candidate - pitch) > tolerance)
+    ) {
+      continue
+    }
+
+    const width =
+      Math.abs(crossCoordinates[1]! - crossCoordinates[0]!) + padLength
+    return `dfn${pads.length}_p${formatPreciseLength(pitch)}_w${formatPreciseLength(width)}_pw${formatPreciseLength(padWidth)}_pl${formatPreciseLength(padLength)}`
+  }
+
+  return undefined
+}
+
 const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   const padCount = target.pads.length
   const seeds = new Set<string>()
@@ -2460,6 +2625,12 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     // Mid-mount USB-C variants are named by their explicit 16-pin form.
     if (family !== "usbcmidmount") seeds.add(family)
   }
+
+  const bgaGridSeed = getBgaGridSeed(target)
+  if (bgaGridSeed) seeds.add(bgaGridSeed)
+
+  const twoSidedDfnSeed = getTwoSidedDfnSeed(target)
+  if (twoSidedDfnSeed) seeds.add(twoSidedDfnSeed)
 
   if (analysis.dpak) {
     const { family, numberOfPads, p, pl, pw, span, tabh, tabw } = analysis.dpak

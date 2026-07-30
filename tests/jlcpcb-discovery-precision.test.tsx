@@ -192,6 +192,112 @@ const Jy1103H330Qx = () => (
   />
 )
 
+const Tps61046Yffr = () => (
+  <chip
+    name="U1"
+    footprint={
+      <footprint>
+        {[
+          [0.40005, 0.199898],
+          [0.40005, -0.199898],
+          [0, 0.199898],
+          [0, -0.199898],
+          [-0.40005, 0.199898],
+          [-0.40005, -0.199898],
+        ].map(([pcbX, pcbY], index) => (
+          <smtpad
+            key={`${pcbX}-${pcbY}`}
+            portHints={[`pin${index + 1}`]}
+            pcbX={pcbX}
+            pcbY={pcbY}
+            width={0.1839976}
+            height={0.1839976}
+            shape="rect"
+          />
+        ))}
+      </footprint>
+    }
+  />
+)
+
+const Tps7A2012Pycjr = () => (
+  <chip
+    name="U1"
+    footprint={
+      <footprint>
+        {[
+          [-0.175006, 0.175006],
+          [0.175006, 0.175006],
+          [-0.175006, -0.175006],
+          [0.175006, -0.175006],
+        ].map(([pcbX, pcbY], index) => (
+          <smtpad
+            key={`${pcbX}-${pcbY}`}
+            portHints={[`pin${index + 1}`]}
+            pcbX={pcbX}
+            pcbY={pcbY}
+            width={0.1649984}
+            height={0.1649984}
+            shape="rect"
+          />
+        ))}
+      </footprint>
+    }
+  />
+)
+
+const Hx12x12x73TpftB = () => (
+  <chip
+    name="SW1"
+    footprint={
+      <footprint>
+        {[
+          [7.499985, -2.499995],
+          [-7.499985, -2.499995],
+          [7.499985, 2.499995],
+          [-7.499985, 2.499995],
+        ].map(([pcbX, pcbY], index) => (
+          <smtpad
+            key={`${pcbX}-${pcbY}`}
+            portHints={[`pin${4 - index}`]}
+            pcbX={pcbX}
+            pcbY={pcbY}
+            width={2.999994}
+            height={1.999996}
+            shape="rect"
+          />
+        ))}
+      </footprint>
+    }
+  />
+)
+
+const Q13Mc30610003 = () => (
+  <chip
+    name="Y1"
+    footprint={
+      <footprint>
+        {[
+          [-2.84988, -1.500124],
+          [2.84988, -1.500124],
+          [2.84988, 1.500124],
+          [-2.84988, 1.500124],
+        ].map(([pcbX, pcbY], index) => (
+          <smtpad
+            key={`${pcbX}-${pcbY}`}
+            portHints={[`pin${index + 1}`]}
+            pcbX={pcbX}
+            pcbY={pcbY}
+            width={0.8999982}
+            height={1.2999974}
+            shape="rect"
+          />
+        ))}
+      </footprint>
+    }
+  />
+)
+
 test("recovers C157989 all-round pinrow pads", async () => {
   const result = await expectFootprintRecovery({
     FootprintComponent: B5psVh,
@@ -246,5 +352,50 @@ test("recovers C3038104 DFN-4-EP corner pads", async () => {
 
   expect(result.best!.footprinterString).toBe(
     "dfn4_w1.3009mm_p0.65mm_pl0.4mm_pw0.2mm_cornerpads_cornerpadcutlength0.15mm_thermalpad0.48mmx0.48mm_rounded0_thermalpadcenteroffsety-0.005mm_pin1location(leftside,bottom)",
+  )
+})
+
+test("recovers C181551 as a six-pad BGA grid", async () => {
+  const result = await expectFootprintRecovery({
+    FootprintComponent: Tps61046Yffr,
+    sourceHints: ["C181551 TPS61046YFFR DSBGA-6"],
+  })
+
+  expect(result.best!.footprinterString).toBe(
+    "bga6_grid3x2_p0.4001mm_pad0.184mm_pin1location(rightside,top)",
+  )
+})
+
+test("recovers C5220159 as a four-pad BGA grid at 5 um pad precision", async () => {
+  const result = await expectFootprintRecovery({
+    FootprintComponent: Tps7A2012Pycjr,
+    sourceHints: ["C5220159 TPS7A2012PYCJR DSBGA-4(0.6x0.6)"],
+  })
+
+  expect(result.best!.footprinterString).toBe(
+    "bga4_grid2x2_p0.35mm_pad0.165mm_pin1location(leftside,top)",
+  )
+})
+
+test("recovers C36498966 as a large SMD push button", async () => {
+  const result = await expectFootprintRecovery({
+    FootprintComponent: Hx12x12x73TpftB,
+    sourceHints: ["C36498966 HX 12x12x7.3TPFT-B SMD-4P,11.8x11.8mm"],
+  })
+
+  expect(result.best!.footprinterString).toBe(
+    "smdpushbutton4_px15mm_py5mm_pw3mm_ph2mm",
+  )
+})
+
+test("recovers C16320 with a measured DFN-4 seed", async () => {
+  const result = await expectFootprintRecovery({
+    FootprintComponent: Q13Mc30610003,
+    minimumCopperIntersectionOverUnion: 0.99,
+    sourceHints: ["C16320 Q13MC30610003 MC-306"],
+  })
+
+  expect(result.best!.footprinterString).toBe(
+    "dfn4_p3.0002mm_w6.5998mm_pw1.3mm_pl0.9mm",
   )
 })
