@@ -2348,6 +2348,108 @@ const getQuadSidePinSuffix = (analysis: TargetAnalysis) => {
   ].join("_")
 }
 
+const getSot223Seed = (target: Footprint) => {
+  const pads = getPadGeometries(target)
+  if (
+    pads.length !== 4 ||
+    pads.some(
+      ({ copper, drill, element }) =>
+        element.type !== "pcb_smtpad" || drill || copper.shape !== "rect",
+    )
+  ) {
+    return undefined
+  }
+
+  for (const [crossAxis, alongAxis] of [
+    ["x", "y"],
+    ["y", "x"],
+  ] as const) {
+    const sortedPads = [...pads].toSorted(
+      (left, right) => left.copper[crossAxis] - right.copper[crossAxis],
+    )
+    const leadCandidates = [sortedPads.slice(0, 3), sortedPads.slice(1)]
+
+    for (const leads of leadCandidates) {
+      const tab = sortedPads.find((pad) => !leads.includes(pad))
+      if (!tab) continue
+
+      const leadCross = median(leads.map((lead) => lead.copper[crossAxis]))
+      const crossTolerance = 0.025
+      if (
+        leads.some(
+          (lead) =>
+            Math.abs(lead.copper[crossAxis] - leadCross) > crossTolerance,
+        )
+      ) {
+        continue
+      }
+
+      const leadBounds = leads.map((lead) => getPadBounds(lead.copper))
+      const tabBounds = getPadBounds(tab.copper)
+      const leadCrossSize = median(
+        leadBounds.map(
+          (bounds) => bounds[crossAxis === "x" ? "width" : "height"],
+        ),
+      )
+      const leadAlongSize = median(
+        leadBounds.map(
+          (bounds) => bounds[alongAxis === "x" ? "width" : "height"],
+        ),
+      )
+      const tabCrossSize = tabBounds[crossAxis === "x" ? "width" : "height"]
+      const tabAlongSize = tabBounds[alongAxis === "x" ? "width" : "height"]
+      if (
+        leads.some((_, index) => {
+          const bounds = leadBounds[index]!
+          const crossSize = bounds[crossAxis === "x" ? "width" : "height"]
+          const alongSize = bounds[alongAxis === "x" ? "width" : "height"]
+          return (
+            Math.abs(crossSize - leadCrossSize) > 0.025 ||
+            Math.abs(alongSize - leadAlongSize) > 0.025
+          )
+        }) ||
+        tabCrossSize * tabAlongSize <= leadCrossSize * leadAlongSize ||
+        tabAlongSize <= leadAlongSize
+      ) {
+        continue
+      }
+
+      const alongCoordinates = leads
+        .map((lead) => lead.copper[alongAxis])
+        .toSorted((left, right) => left - right)
+      const pitch = median([
+        alongCoordinates[1]! - alongCoordinates[0]!,
+        alongCoordinates[2]! - alongCoordinates[1]!,
+      ])
+      if (
+        pitch <= 0.05 ||
+        Math.abs(alongCoordinates[1]! - alongCoordinates[0]! - pitch) > 0.025 ||
+        Math.abs(alongCoordinates[2]! - alongCoordinates[1]! - pitch) > 0.025
+      ) {
+        continue
+      }
+
+      const leadDistance = Math.abs(leadCross)
+      const tabDistance = Math.abs(tab.copper[crossAxis])
+      if (leadDistance <= 0.05 || tabDistance <= 0.05) continue
+
+      return [
+        "sot223",
+        `w${formatPreciseLength(2 * (leadDistance + 1.1))}`,
+        `p${formatPreciseLength(pitch)}`,
+        `pl${formatPreciseLength(leadCrossSize)}`,
+        `pw${formatPreciseLength(leadAlongSize)}`,
+        `tabpl${formatPreciseLength(tabCrossSize)}`,
+        `tabpw${formatPreciseLength(tabAlongSize)}`,
+        `taboffset${formatPreciseLength(tabDistance - leadDistance)}`,
+        "rounded0",
+      ].join("_")
+    }
+  }
+
+  return undefined
+}
+
 const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   const padCount = target.pads.length
   const seeds = new Set<string>()
@@ -2497,6 +2599,97 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     ].filter(Boolean)
     seeds.add(`rj45_${parameters.join("_")}`)
   }
+  const targetPads = getPadGeometries(target)
+  const dfnCornerPads = targetPads.filter(
+    ({ copper, drill, element }) =>
+      element.type === "pcb_smtpad" && !drill && copper.shape === "polygon",
+  )
+  const dfnExposedPad = targetPads.find(
+    ({ copper, drill, element }) =>
+      element.type === "pcb_smtpad" && !drill && copper.shape === "rect",
+  )
+  if (targetPads.length === 5 && dfnCornerPads.length === 4 && dfnExposedPad) {
+    const exposedPadBounds = getPadBounds(dfnExposedPad.copper)
+    for (const [crossAxis, alongAxis] of [
+      ["x", "y"],
+      ["y", "x"],
+    ] as const) {
+      const crossSizeKey = crossAxis === "x" ? "width" : "height"
+      const alongSizeKey = alongAxis === "x" ? "width" : "height"
+      const cornerPadBounds = dfnCornerPads.map(({ copper }) =>
+        getPadBounds(copper),
+      )
+      const padLength = median(
+        cornerPadBounds.map((bounds) => bounds[crossSizeKey]),
+      )
+      const padWidth = median(
+        cornerPadBounds.map((bounds) => bounds[alongSizeKey]),
+      )
+      const crossCenters = cornerPadBounds.map(
+        (bounds) => (bounds.minX + bounds.maxX) / 2,
+      )
+      const alongCenters = cornerPadBounds.map(
+        (bounds) => (bounds.minY + bounds.maxY) / 2,
+      )
+      const selectedCrossCenters =
+        crossAxis === "x" ? crossCenters : alongCenters
+      const selectedAlongCenters =
+        alongAxis === "x" ? crossCenters : alongCenters
+      const width =
+        2 * (median(selectedCrossCenters.map(Math.abs)) + padLength / 2)
+      const pitch = 2 * median(selectedAlongCenters.map(Math.abs))
+      const cutLengths = dfnCornerPads.flatMap(({ copper }, index) => {
+        if (copper.shape !== "polygon") return []
+        const bounds = cornerPadBounds[index]!
+        const centerX = (bounds.minX + bounds.maxX) / 2
+        const centerY = (bounds.minY + bounds.maxY) / 2
+        const crossCenter = crossAxis === "x" ? centerX : centerY
+        const alongCenter = alongAxis === "x" ? centerX : centerY
+        const innerCross =
+          crossCenter - (Math.sign(crossCenter) * bounds[crossSizeKey]) / 2
+        const innerAlong =
+          alongCenter - (Math.sign(alongCenter) * bounds[alongSizeKey]) / 2
+        const distances = getPolygonWorldPoints(copper)
+          .flatMap((point) => [
+            Math.abs(point[crossAxis] - innerCross) < 0.01
+              ? Math.abs(point[alongAxis] - innerAlong)
+              : undefined,
+            Math.abs(point[alongAxis] - innerAlong) < 0.01
+              ? Math.abs(point[crossAxis] - innerCross)
+              : undefined,
+          ])
+          .filter(
+            (distance): distance is number =>
+              distance !== undefined && distance > 0.01,
+          )
+        return distances.length ? [Math.min(...distances)] : []
+      })
+      const cornerPadCut = median(cutLengths)
+      if (
+        !Number.isFinite(cornerPadCut) ||
+        cornerPadCut <= 0 ||
+        cornerPadCut > Math.min(padLength, padWidth)
+      ) {
+        continue
+      }
+      seeds.add(
+        [
+          "dfn4",
+          `w${formatPreciseLength(width)}`,
+          `p${formatPreciseLength(pitch)}`,
+          `pl${formatPreciseLength(padLength)}`,
+          `pw${formatPreciseLength(padWidth)}`,
+          "cornerpads",
+          `cornerpadcutlength${formatPreciseLength(cornerPadCut)}`,
+          `thermalpad${formatPreciseLength(exposedPadBounds.width)}x${formatPreciseLength(exposedPadBounds.height)}`,
+          "rounded0",
+        ].join("_"),
+      )
+    }
+  }
+
+  const sot223Seed = getSot223Seed(target)
+  if (sot223Seed) seeds.add(sot223Seed)
 
   if (analysis.usbCMidMount && !analysis.usbCMidMount.noHoles) {
     const {
