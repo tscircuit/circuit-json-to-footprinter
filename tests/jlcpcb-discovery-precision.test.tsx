@@ -205,15 +205,16 @@ const Tps61046Yffr = () => (
           [-0.40005, 0.199898],
           [-0.40005, -0.199898],
         ].map(([pcbX, pcbY], index) => (
-          <smtpad
-            key={`${pcbX}-${pcbY}`}
-            portHints={[`pin${index + 1}`]}
-            pcbX={pcbX}
-            pcbY={pcbY}
-            width={0.1839976}
-            height={0.1839976}
-            shape="rect"
-          />
+          <Fragment key={`${pcbX}-${pcbY}`}>
+            <smtpad
+              portHints={[`pin${index + 1}`]}
+              pcbX={pcbX}
+              pcbY={pcbY}
+              width={0.1839976}
+              height={0.1839976}
+              shape="rect"
+            />
+          </Fragment>
         ))}
       </footprint>
     }
@@ -231,15 +232,16 @@ const Tps7A2012Pycjr = () => (
           [-0.175006, -0.175006],
           [0.175006, -0.175006],
         ].map(([pcbX, pcbY], index) => (
-          <smtpad
-            key={`${pcbX}-${pcbY}`}
-            portHints={[`pin${index + 1}`]}
-            pcbX={pcbX}
-            pcbY={pcbY}
-            width={0.1649984}
-            height={0.1649984}
-            shape="rect"
-          />
+          <Fragment key={`${pcbX}-${pcbY}`}>
+            <smtpad
+              portHints={[`pin${index + 1}`]}
+              pcbX={pcbX}
+              pcbY={pcbY}
+              width={0.1649984}
+              height={0.1649984}
+              shape="rect"
+            />
+          </Fragment>
         ))}
       </footprint>
     }
@@ -257,15 +259,16 @@ const Hx12x12x73TpftB = () => (
           [7.499985, 2.499995],
           [-7.499985, 2.499995],
         ].map(([pcbX, pcbY], index) => (
-          <smtpad
-            key={`${pcbX}-${pcbY}`}
-            portHints={[`pin${4 - index}`]}
-            pcbX={pcbX}
-            pcbY={pcbY}
-            width={2.999994}
-            height={1.999996}
-            shape="rect"
-          />
+          <Fragment key={`${pcbX}-${pcbY}`}>
+            <smtpad
+              portHints={[`pin${4 - index}`]}
+              pcbX={pcbX}
+              pcbY={pcbY}
+              width={2.999994}
+              height={1.999996}
+              shape="rect"
+            />
+          </Fragment>
         ))}
       </footprint>
     }
@@ -283,15 +286,16 @@ const Q13Mc30610003 = () => (
           [2.84988, 1.500124],
           [-2.84988, 1.500124],
         ].map(([pcbX, pcbY], index) => (
-          <smtpad
-            key={`${pcbX}-${pcbY}`}
-            portHints={[`pin${index + 1}`]}
-            pcbX={pcbX}
-            pcbY={pcbY}
-            width={0.8999982}
-            height={1.2999974}
-            shape="rect"
-          />
+          <Fragment key={`${pcbX}-${pcbY}`}>
+            <smtpad
+              portHints={[`pin${index + 1}`]}
+              pcbX={pcbX}
+              pcbY={pcbY}
+              width={0.8999982}
+              height={1.2999974}
+              shape="rect"
+            />
+          </Fragment>
         ))}
       </footprint>
     }
