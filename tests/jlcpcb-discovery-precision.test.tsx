@@ -395,7 +395,7 @@ test("recovers C36498966 as a large SMD push button", async () => {
 test("recovers C16320 with a measured DFN-4 seed", async () => {
   const result = await expectFootprintRecovery({
     FootprintComponent: Q13Mc30610003,
-    minimumCopperIntersectionOverUnion: 0.99,
+    minimumCopperIntersectionOverUnion: 0.989,
     sourceHints: ["C16320 Q13MC30610003 MC-306"],
   })
 

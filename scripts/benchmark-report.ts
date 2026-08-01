@@ -104,7 +104,7 @@ export const formatBenchmarkMarkdown = (
 
   lines.push(
     "",
-    "The percentage is measured against each component's exact imported JLC/EasyEDA copper geometry on Fast Footprint Compare's 320x320 raster.",
+    "The percentage is measured against each component's exact imported JLC/EasyEDA copper geometry using Manifold 2D boolean operations.",
     "",
   )
   return lines.join("\n")

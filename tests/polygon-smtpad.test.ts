@@ -56,7 +56,7 @@ test("preserves polygon SMT pad vertices and bounds", () => {
   })
 })
 
-test("rasterizes polygon copper instead of its bounding rectangle", () => {
+test("compares polygon copper instead of its bounding rectangle", () => {
   const square = circuitJsonToFootprint([
     polygonPad([
       { x: -1, y: -1 },

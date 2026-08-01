@@ -94,7 +94,7 @@ test("recovers C92489 BME280 with pill-shaped LGA pads", async () => {
   const result = await expectFootprintRecovery({
     FootprintComponent: BME280,
     // Rounding each 0.364 mm pad dimension to 10 µm slightly lowers IoU.
-    minimumCopperIntersectionOverUnion: 0.989,
+    minimumCopperIntersectionOverUnion: 0.988,
     sourceHints: ["C92489 BME280 LGA-8(2.5x2.5)"],
   })
 

@@ -1,4 +1,10 @@
+import {
+  getManifoldModule,
+  type CrossSection as ManifoldCrossSection,
+  type SimplePolygon,
+} from "@tscircuit/manifold-2d"
 import { getBoundsCenter, isPointInsidePolygon } from "@tscircuit/math-utils"
+import type { Point } from "circuit-json"
 import type { Footprint } from "./footprint.js"
 import {
   type Bounds,
@@ -14,12 +20,19 @@ export type { Bounds } from "./footprint-geometry.js"
 export { getFootprintBounds } from "./footprint-geometry.js"
 
 const DEFAULT_GRID_SIZE = 320
+const CURVE_SEGMENTS = 64
+const MANIFOLD_COORDINATE_SCALE = 1_000_000
+const { CrossSection } = await getManifoldModule()
 
 export interface CopperComparisonSummary {
   copperIntersectionOverUnion: number
   holeIntersectionOverUnion: number
 }
 
+/**
+ * Comparison metrics are calculated with Manifold boolean operations. The
+ * raster fields are retained for the Fast Footprint Compare heatmap.
+ */
 export interface RasterComparison {
   coverageLeft: number
   coverageRight: number
@@ -33,12 +46,11 @@ export interface RasterComparison {
   rightOnlyRatio: number
 }
 
-interface RasterizedShapes {
+interface BooleanShapeComparison {
   coverageLeft: number
   coverageRight: number
   iou: number
   leftOnlyRatio: number
-  occupancy?: Uint8Array
   rightOnlyRatio: number
 }
 
@@ -199,22 +211,15 @@ const getComparisonBounds = (
   )
 }
 
-const rasterizeShapes = (
+const rasterizeOccupancy = (
   left: readonly ShapeGeometry[],
   right: readonly ShapeGeometry[],
   gridSize: number,
-  includeOccupancy: boolean,
-): RasterizedShapes => {
+) => {
   const bounds = getComparisonBounds(left, right)
   const cellWidth = bounds.width / gridSize
   const cellHeight = bounds.height / gridSize
-  const occupancy = includeOccupancy
-    ? new Uint8Array(gridSize * gridSize)
-    : undefined
-
-  let leftCount = 0
-  let rightCount = 0
-  let overlapCount = 0
+  const occupancy = new Uint8Array(gridSize * gridSize)
 
   for (let row = 0; row < gridSize; row += 1) {
     const sampleY = bounds.maxY - (row + 0.5) * cellHeight
@@ -225,50 +230,201 @@ const rasterizeShapes = (
       const inRight = right.some((shape) =>
         pointInShape(sampleX, sampleY, shape),
       )
-
-      if (inLeft) leftCount += 1
-      if (inRight) rightCount += 1
-      if (inLeft && inRight) overlapCount += 1
-
-      if (occupancy) {
-        const index = row * gridSize + column
-        occupancy[index] = inLeft && inRight ? 3 : inLeft ? 1 : inRight ? 2 : 0
-      }
+      const index = row * gridSize + column
+      occupancy[index] = inLeft && inRight ? 3 : inLeft ? 1 : inRight ? 2 : 0
     }
   }
 
-  const unionCount = leftCount + rightCount - overlapCount
+  return occupancy
+}
 
-  return {
-    coverageLeft: leftCount === 0 ? 0 : overlapCount / leftCount,
-    coverageRight: rightCount === 0 ? 0 : overlapCount / rightCount,
-    iou: unionCount === 0 ? 0 : overlapCount / unionCount,
-    leftOnlyRatio:
-      unionCount === 0 ? 0 : Math.max(leftCount - overlapCount, 0) / unionCount,
-    occupancy,
-    rightOnlyRatio:
-      unionCount === 0
-        ? 0
-        : Math.max(rightCount - overlapCount, 0) / unionCount,
+const getEllipsePoints = (halfWidth: number, halfHeight: number): Point[] =>
+  Array.from({ length: CURVE_SEGMENTS }, (_, index) => {
+    const angle = (index / CURVE_SEGMENTS) * Math.PI * 2
+    return {
+      x: Math.cos(angle) * halfWidth,
+      y: Math.sin(angle) * halfHeight,
+    }
+  })
+
+const getRoundedRectPoints = (
+  halfWidth: number,
+  halfHeight: number,
+  requestedRadius: number,
+): Point[] => {
+  const radius = Math.max(0, Math.min(requestedRadius, halfWidth, halfHeight))
+  if (radius === 0) {
+    return [
+      { x: -halfWidth, y: -halfHeight },
+      { x: halfWidth, y: -halfHeight },
+      { x: halfWidth, y: halfHeight },
+      { x: -halfWidth, y: halfHeight },
+    ]
+  }
+
+  const segmentsPerCorner = CURVE_SEGMENTS / 4
+  const corners = [
+    {
+      startAngle: -Math.PI / 2,
+      x: halfWidth - radius,
+      y: -halfHeight + radius,
+    },
+    { startAngle: 0, x: halfWidth - radius, y: halfHeight - radius },
+    { startAngle: Math.PI / 2, x: -halfWidth + radius, y: halfHeight - radius },
+    { startAngle: Math.PI, x: -halfWidth + radius, y: -halfHeight + radius },
+  ]
+
+  return corners.flatMap((corner) =>
+    Array.from({ length: segmentsPerCorner }, (_, index) => {
+      const angle =
+        corner.startAngle + (index / segmentsPerCorner) * (Math.PI / 2)
+      return {
+        x: corner.x + Math.cos(angle) * radius,
+        y: corner.y + Math.sin(angle) * radius,
+      }
+    }),
+  )
+}
+
+const getShapeLocalPoints = (shape: ShapeGeometry): Point[] => {
+  if (shape.width <= 0 || shape.height <= 0) return []
+
+  if (shape.shape === "polygon") {
+    if (!shape.points || shape.points.length < 3) {
+      throw new Error("Polygon footprint shapes require at least three points")
+    }
+    return shape.points
+  }
+
+  const halfWidth = shape.width / 2
+  const halfHeight = shape.height / 2
+  if (shape.shape === "circle") {
+    const radius = Math.min(halfWidth, halfHeight)
+    return getEllipsePoints(radius, radius)
+  }
+  if (shape.shape === "ellipse") {
+    return getEllipsePoints(halfWidth, halfHeight)
+  }
+
+  const cornerRadius =
+    shape.shape === "pill"
+      ? Math.min(halfWidth, halfHeight)
+      : (shape.cornerRadius ?? 0)
+  return getRoundedRectPoints(halfWidth, halfHeight, cornerRadius)
+}
+
+const getSignedArea = (polygon: SimplePolygon) => {
+  let doubledArea = 0
+  for (let index = 0; index < polygon.length; index += 1) {
+    const current = polygon[index]
+    const next = polygon[(index + 1) % polygon.length]
+    doubledArea += current[0] * next[1] - next[0] * current[1]
+  }
+  return doubledArea / 2
+}
+
+const shapeToManifoldPolygon = (shape: ShapeGeometry): SimplePolygon => {
+  const radians = toRadians(shape.rotation)
+  const polygon: SimplePolygon = []
+
+  for (const point of getShapeLocalPoints(shape)) {
+    const rotated = rotatePoint(point.x, point.y, radians)
+    const scaledPoint: [number, number] = [
+      Math.round((rotated.x + shape.x) * MANIFOLD_COORDINATE_SCALE),
+      Math.round((rotated.y + shape.y) * MANIFOLD_COORDINATE_SCALE),
+    ]
+    const previous = polygon[polygon.length - 1]
+    if (
+      !previous ||
+      previous[0] !== scaledPoint[0] ||
+      previous[1] !== scaledPoint[1]
+    ) {
+      polygon.push(scaledPoint)
+    }
+  }
+
+  const first = polygon[0]
+  const last = polygon[polygon.length - 1]
+  if (first && last && first[0] === last[0] && first[1] === last[1]) {
+    polygon.pop()
+  }
+  if (polygon.length < 3 || Math.abs(getSignedArea(polygon)) < 1) return []
+  return getSignedArea(polygon) < 0 ? polygon.reverse() : polygon
+}
+
+const createCrossSection = (
+  shapes: readonly ShapeGeometry[],
+): ManifoldCrossSection | null => {
+  const polygons = shapes
+    .map(shapeToManifoldPolygon)
+    .filter((polygon) => polygon.length >= 3)
+  return polygons.length === 0
+    ? null
+    : CrossSection.ofPolygons(polygons, "Positive")
+}
+
+const clampRatio = (ratio: number) => Math.max(0, Math.min(1, ratio))
+
+const compareShapesWithManifold = (
+  left: readonly ShapeGeometry[],
+  right: readonly ShapeGeometry[],
+): BooleanShapeComparison => {
+  let leftSection: ManifoldCrossSection | null = null
+  let rightSection: ManifoldCrossSection | null = null
+  let intersection: ManifoldCrossSection | null = null
+
+  try {
+    leftSection = createCrossSection(left)
+    rightSection = createCrossSection(right)
+    const leftArea = Math.abs(leftSection?.area() ?? 0)
+    const rightArea = Math.abs(rightSection?.area() ?? 0)
+
+    if (leftSection && rightSection) {
+      intersection = leftSection.intersect(rightSection)
+    }
+    const intersectionArea = Math.min(
+      Math.abs(intersection?.area() ?? 0),
+      leftArea,
+      rightArea,
+    )
+    const unionArea = Math.max(leftArea + rightArea - intersectionArea, 0)
+
+    return {
+      coverageLeft:
+        leftArea === 0 ? 0 : clampRatio(intersectionArea / leftArea),
+      coverageRight:
+        rightArea === 0 ? 0 : clampRatio(intersectionArea / rightArea),
+      iou: unionArea === 0 ? 0 : clampRatio(intersectionArea / unionArea),
+      leftOnlyRatio:
+        unionArea === 0
+          ? 0
+          : clampRatio((leftArea - intersectionArea) / unionArea),
+      rightOnlyRatio:
+        unionArea === 0
+          ? 0
+          : clampRatio((rightArea - intersectionArea) / unionArea),
+    }
+  } finally {
+    intersection?.delete()
+    leftSection?.delete()
+    rightSection?.delete()
   }
 }
 
-const compareNormalizedFootprints = (
-  left: Footprint,
-  right: Footprint,
-  gridSize: number,
-  includeOccupancy: boolean,
-) => {
+const compareNormalizedFootprints = (left: Footprint, right: Footprint) => {
   const normalizedLeft = centerFootprint(left)
   const normalizedRight = centerFootprint(right)
-  const comparison = rasterizeShapes(
-    getCopperShapes(normalizedLeft),
-    getCopperShapes(normalizedRight),
-    gridSize,
-    includeOccupancy,
-  )
+  const leftCopper = getCopperShapes(normalizedLeft)
+  const rightCopper = getCopperShapes(normalizedRight)
+  const comparison = compareShapesWithManifold(leftCopper, rightCopper)
 
-  return { comparison, normalizedLeft, normalizedRight }
+  return {
+    comparison,
+    leftCopper,
+    normalizedLeft,
+    normalizedRight,
+    rightCopper,
+  }
 }
 
 export const compareFootprints = (
@@ -276,8 +432,13 @@ export const compareFootprints = (
   right: Footprint,
   gridSize = DEFAULT_GRID_SIZE,
 ): RasterComparison => {
-  const { comparison, normalizedLeft, normalizedRight } =
-    compareNormalizedFootprints(left, right, gridSize, true)
+  const {
+    comparison,
+    leftCopper,
+    normalizedLeft,
+    normalizedRight,
+    rightCopper,
+  } = compareNormalizedFootprints(left, right)
 
   return {
     coverageLeft: comparison.coverageLeft,
@@ -287,7 +448,7 @@ export const compareFootprints = (
     leftOnlyRatio: comparison.leftOnlyRatio,
     normalizedLeft,
     normalizedRight,
-    occupancy: comparison.occupancy ?? new Uint8Array(gridSize * gridSize),
+    occupancy: rasterizeOccupancy(leftCopper, rightCopper, gridSize),
     padCountMatch: normalizedLeft.pads.length === normalizedRight.pads.length,
     rightOnlyRatio: comparison.rightOnlyRatio,
   }
@@ -296,16 +457,16 @@ export const compareFootprints = (
 export const summarizeCopperComparison = (
   left: Footprint,
   right: Footprint,
-  gridSize = DEFAULT_GRID_SIZE,
+  _gridSize = DEFAULT_GRID_SIZE,
 ): CopperComparisonSummary => {
   const { comparison, normalizedLeft, normalizedRight } =
-    compareNormalizedFootprints(left, right, gridSize, false)
+    compareNormalizedFootprints(left, right)
   const leftHoles = getHoleShapes(normalizedLeft)
   const rightHoles = getHoleShapes(normalizedRight)
   const holeIntersectionOverUnion =
     leftHoles.length === 0 && rightHoles.length === 0
       ? 1
-      : rasterizeShapes(leftHoles, rightHoles, gridSize, false).iou
+      : compareShapesWithManifold(leftHoles, rightHoles).iou
 
   return {
     copperIntersectionOverUnion: comparison.iou,

@@ -12,7 +12,6 @@ import {
   type ShapeGeometry,
 } from "./footprint-geometry.js"
 
-const SEARCH_GRID_SIZE = 112
 const MAX_OPTIMIZED_SEEDS = 10
 const OPTIMIZATION_STEPS = 16
 const NUMERIC_PARAMETERS = [
@@ -3501,7 +3500,7 @@ export const discoverFootprinterString = (
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): RankedDiscoveryCandidate => {
       const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
-        summarizeCopperComparison(candidate.footprint, target, SEARCH_GRID_SIZE)
+        summarizeCopperComparison(candidate.footprint, target)
       const domainScore = getDomainScore(target, candidate.family)
       return {
         copperIntersectionOverUnion,

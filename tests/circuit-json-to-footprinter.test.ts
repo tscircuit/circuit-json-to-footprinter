@@ -192,7 +192,7 @@ test("uses oriented dimensions to recover a rotated dual-row footprint", () => {
   expect(result.best?.footprinterString).toContain(
     "pin1location(leftside,bottom)",
   )
-  expect(result.best?.copperIntersectionOverUnion).toBe(1)
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.997)
 })
 
 test("infers a BGA grid and continuous dimensions", () => {

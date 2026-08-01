@@ -42,6 +42,11 @@ the discovery engine. Browser-only comparison code can import the lightweight
 `circuit-json-to-footprinter/compare` entry point without bundling the discovery
 engine or `@tscircuit/footprinter`.
 
+Copper and hole IoU scores use `@tscircuit/manifold-2d` boolean intersections
+and unions, so scores do not depend on a raster resolution. `compareFootprints`
+still returns a raster occupancy map for rendering a visual diff heatmap; that
+map does not affect any comparison metric or discovery ranking.
+
 `Footprint.pads` contains the original `PcbSmtPad | PcbPlatedHole`
 elements and `Footprint.holes` contains the original `PcbHole` elements
 from [`circuit-json`](https://github.com/tscircuit/circuit-json). The converter

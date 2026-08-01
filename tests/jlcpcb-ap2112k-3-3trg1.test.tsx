@@ -64,9 +64,9 @@ test("recovers C23380830 AP2112K_3_3TRG1", async () => {
     sourceHints: ["C23380830 AP2112K-3.3TRG1 SOT-23-5"],
   })
 
-  expect(result.best?.family).toBe("dfn")
+  expect(result.best?.family).toBe("sot25")
   expect(result.best?.footprinterString).toBe(
-    "dfn6_missing(5)_p0.95mm_w3.2mm_pin1location(rightside,bottom)",
+    "sot25_w2.2mm_pl1mm_pin1location(rightside,bottom)",
   )
   expect(result.best).not.toHaveProperty("pcbRotation")
 })

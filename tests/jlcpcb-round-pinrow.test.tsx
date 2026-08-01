@@ -65,8 +65,8 @@ test("recovers C7429634 without square pin-one plating", async () => {
   expect(result.best!.footprinterString).toBe(
     "pinrow4_nosquareplating_p2.5mm_od1.6mm_id1.1mm",
   )
-  expect(result.best!.copperIntersectionOverUnion).toBe(1)
-  expect(result.best!.holeIntersectionOverUnion).toBe(1)
+  expect(result.best!.copperIntersectionOverUnion).toBeGreaterThan(0.9999)
+  expect(result.best!.holeIntersectionOverUnion).toBeGreaterThan(0.9999)
 })
 
 test("recovers C7465127 all-round SIP-4", async () => {
@@ -79,8 +79,8 @@ test("recovers C7465127 all-round SIP-4", async () => {
   expect(result.best!.footprinterString).toBe(
     "pinrow4_nosquareplating_od1.8mm_id1.1mm",
   )
-  expect(result.best!.copperIntersectionOverUnion).toBe(1)
-  expect(result.best!.holeIntersectionOverUnion).toBe(1)
+  expect(result.best!.copperIntersectionOverUnion).toBeGreaterThan(0.9999)
+  expect(result.best!.holeIntersectionOverUnion).toBeGreaterThan(0.9999)
 })
 
 test("renders the C7429634 all-round pinrow footprint", async () => {
