@@ -32,11 +32,43 @@ const isPcbPad = (
 const isPcbHole = (element: AnyCircuitElement): element is PcbHole =>
   element.type === "pcb_hole"
 
+const getPinNumberFromHints = (hints: readonly string[] | undefined) => {
+  for (const hint of hints ?? []) {
+    const match = hint.trim().match(/^(?:pin)?(\d+)$/i)
+    if (match?.[1]) return Number.parseInt(match[1], 10)
+  }
+  return undefined
+}
+
 export const circuitJsonToFootprint = (
   circuitJson: readonly AnyCircuitElement[],
   options: CircuitJsonToFootprintOptions = {},
 ): Footprint => {
-  const pads = circuitJson.filter(isPcbPad)
+  const sourcePorts = circuitJson.filter(
+    (element) => element.type === "source_port",
+  )
+  const pads = circuitJson.filter(isPcbPad).map((pad) => {
+    const pinNumber = getPinNumberFromHints(pad.port_hints)
+    if (pinNumber === undefined) return pad
+
+    const sourcePort = sourcePorts.find(
+      (port) =>
+        port.pin_number === pinNumber ||
+        getPinNumberFromHints([port.name]) === pinNumber,
+    )
+    if (!sourcePort) return pad
+
+    return {
+      ...pad,
+      port_hints: [
+        ...new Set([
+          ...(pad.port_hints ?? []),
+          sourcePort.name,
+          ...(sourcePort.port_hints ?? []),
+        ]),
+      ],
+    }
+  })
   const holes = circuitJson.filter(isPcbHole)
 
   if (pads.length === 0) {
