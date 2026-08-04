@@ -1936,26 +1936,39 @@ const normalizePortHint = (hint: string) => {
 const getPortHints = ({ element }: PcbPadGeometry) =>
   (element.port_hints ?? []).map(normalizePortHint)
 
-const getPin1PolarityModifier = (
+type DiodePolarityModifier = "anodepin1" | "cathodepin1"
+
+const getDiodePolarity = (pad: PcbPadGeometry) => {
+  const hints = getPortHints(pad).map((hint) =>
+    hint.toLowerCase().replace(/[^a-z0-9+-]/g, ""),
+  )
+  const hasAnode = hints.some((hint) =>
+    ["a", "anode", "pos", "+"].includes(hint),
+  )
+  const hasCathode = hints.some((hint) =>
+    ["c", "k", "cathode", "neg", "-"].includes(hint),
+  )
+  if (hasAnode === hasCathode) return undefined
+  return hasAnode ? "anode" : "cathode"
+}
+
+const getDiodePolarityModifier = (
   target: Footprint,
-): "anodepin1" | "cathodepin1" | null => {
-  const pin1Pad = getPadGeometries(target).find((pad) =>
-    getPortHints(pad).includes("pin1"),
-  )
-  if (!pin1Pad) return null
+): DiodePolarityModifier | undefined => {
+  if (target.pads.length !== 2) return undefined
 
-  const hints = new Set(
-    getPortHints(pin1Pad).map((hint) =>
-      hint.toLowerCase().replace(/[^a-z0-9+-]/g, ""),
-    ),
-  )
-  const isAnode = ["a", "anode", "pos", "+"].some((hint) => hints.has(hint))
-  const isCathode = ["c", "k", "cathode", "neg", "-"].some((hint) =>
-    hints.has(hint),
-  )
+  const pads = getPadGeometries(target)
+  const pin1 = pads.find((pad) => getPortHints(pad).includes("pin1"))
+  const pin2 = pads.find((pad) => getPortHints(pad).includes("pin2"))
+  if (!pin1 || !pin2) return undefined
 
-  if (isAnode === isCathode) return null
-  return isAnode ? "anodepin1" : "cathodepin1"
+  const pin1Polarity = getDiodePolarity(pin1)
+  const pin2Polarity = getDiodePolarity(pin2)
+  if (!pin1Polarity || !pin2Polarity || pin1Polarity === pin2Polarity) {
+    return undefined
+  }
+
+  return pin1Polarity === "anode" ? "anodepin1" : "cathodepin1"
 }
 
 const getGeometryLoss = (candidate: Footprint, target: Footprint) => {
@@ -3498,6 +3511,7 @@ export const discoverFootprinterString = (
   maxCandidates = 5,
 ): FootprinterDiscoveryResult => {
   const analysis = analyzeTarget(target)
+  const diodePolarityModifier = getDiodePolarityModifier(target)
   const rawSeeds = generateSeeds(target, analysis)
   const seedCandidates = rawSeeds.flatMap((footprinterString) => {
     const baseUnrotatedFootprint = tryBuild(footprinterString)
@@ -3586,7 +3600,6 @@ export const discoverFootprinterString = (
 
   const uniqueCandidates: FootprinterDiscoveryCandidate[] = []
   const seenStrings = new Set<string>()
-  const pin1PolarityModifier = getPin1PolarityModifier(target)
   for (const candidate of allCandidates) {
     const orientedString = encodeOrientationInFootprinterString(
       candidate.footprinterString,
@@ -3594,13 +3607,13 @@ export const discoverFootprinterString = (
       candidate.footprint,
     )
     if (!orientedString) continue
-    const outputString =
-      pin1PolarityModifier &&
+    const footprinterString =
+      diodePolarityModifier &&
       DIODE_FABRICATION_NOTE_FAMILIES.has(candidate.family)
-        ? `${orientedString}_${pin1PolarityModifier}`
+        ? `${orientedString}_${diodePolarityModifier}`
         : orientedString
-    if (seenStrings.has(outputString)) continue
-    seenStrings.add(outputString)
+    if (seenStrings.has(footprinterString)) continue
+    seenStrings.add(footprinterString)
     const {
       footprint: _footprint,
       searchRotation: _searchRotation,
@@ -3608,7 +3621,7 @@ export const discoverFootprinterString = (
     } = candidate
     uniqueCandidates.push({
       ...publicData,
-      footprinterString: outputString,
+      footprinterString,
     })
     if (uniqueCandidates.length >= clamp(maxCandidates, 1, 10)) break
   }
