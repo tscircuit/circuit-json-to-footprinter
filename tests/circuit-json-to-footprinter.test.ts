@@ -181,6 +181,33 @@ test("encodes a rotated match in the footprinter string", () => {
   )
 })
 
+test.each([
+  ["anode", "pos", "anodepin1"],
+  ["cathode", "neg", "cathodepin1"],
+] as const)(
+  "adds explicit pin 1 %s polarity to diode footprints",
+  (polarity, alias, expectedModifier) => {
+    const circuitJson = fp
+      .string("sod123w")
+      .circuitJson()
+      .map((element) =>
+        element.type === "pcb_smtpad" && element.port_hints?.includes("1")
+          ? {
+              ...element,
+              port_hints: [...element.port_hints, polarity, alias],
+            }
+          : element,
+      )
+    const result = circuitJsonToFootprinter(circuitJson, {
+      maxCandidates: 3,
+      sourceHints: ["SOD-123W diode"],
+    })
+
+    expect(result.best?.family).toBe("sod123w")
+    expect(result.best?.footprinterString).toEndWith(`_${expectedModifier}`)
+  },
+)
+
 test("uses oriented dimensions to recover a rotated dual-row footprint", () => {
   const source = "soic8_p1.27mm_w7.3604mm_pw0.5684mm_pl1.9502mm_pillpads"
   const result = discoverFootprinterString(

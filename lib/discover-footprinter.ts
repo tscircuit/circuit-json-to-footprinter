@@ -47,6 +47,33 @@ const PIN1_LOCATIONS: Pin1Location[] = [
   ["bottomside", "left"],
   ["bottomside", "right"],
 ]
+const DIODE_FABRICATION_NOTE_FAMILIES = new Set([
+  "diode",
+  "melf",
+  "micromelf",
+  "minimelf",
+  "sma",
+  "smb",
+  "smbf",
+  "smc",
+  "smf",
+  "sod80",
+  "sod110",
+  "sod123",
+  "sod123f",
+  "sod123fl",
+  "sod123w",
+  "sod128",
+  "sod323",
+  "sod323f",
+  "sod323fl",
+  "sod323w",
+  "sod523",
+  "sod723",
+  "sod882",
+  "sod882d",
+  "sod923",
+])
 
 interface TargetAnalysis {
   bounds: Bounds
@@ -1909,6 +1936,28 @@ const normalizePortHint = (hint: string) => {
 const getPortHints = ({ element }: PcbPadGeometry) =>
   (element.port_hints ?? []).map(normalizePortHint)
 
+const getPin1PolarityModifier = (
+  target: Footprint,
+): "anodepin1" | "cathodepin1" | null => {
+  const pin1Pad = getPadGeometries(target).find((pad) =>
+    getPortHints(pad).includes("pin1"),
+  )
+  if (!pin1Pad) return null
+
+  const hints = new Set(
+    getPortHints(pin1Pad).map((hint) =>
+      hint.toLowerCase().replace(/[^a-z0-9+-]/g, ""),
+    ),
+  )
+  const isAnode = ["a", "anode", "pos", "+"].some((hint) => hints.has(hint))
+  const isCathode = ["c", "k", "cathode", "neg", "-"].some((hint) =>
+    hints.has(hint),
+  )
+
+  if (isAnode === isCathode) return null
+  return isAnode ? "anodepin1" : "cathodepin1"
+}
+
 const getGeometryLoss = (candidate: Footprint, target: Footprint) => {
   if (candidate.pads.length !== target.pads.length) return 1_000
 
@@ -3537,14 +3586,21 @@ export const discoverFootprinterString = (
 
   const uniqueCandidates: FootprinterDiscoveryCandidate[] = []
   const seenStrings = new Set<string>()
+  const pin1PolarityModifier = getPin1PolarityModifier(target)
   for (const candidate of allCandidates) {
     const orientedString = encodeOrientationInFootprinterString(
       candidate.footprinterString,
       candidate.searchRotation,
       candidate.footprint,
     )
-    if (!orientedString || seenStrings.has(orientedString)) continue
-    seenStrings.add(orientedString)
+    if (!orientedString) continue
+    const outputString =
+      pin1PolarityModifier &&
+      DIODE_FABRICATION_NOTE_FAMILIES.has(candidate.family)
+        ? `${orientedString}_${pin1PolarityModifier}`
+        : orientedString
+    if (seenStrings.has(outputString)) continue
+    seenStrings.add(outputString)
     const {
       footprint: _footprint,
       searchRotation: _searchRotation,
@@ -3552,7 +3608,7 @@ export const discoverFootprinterString = (
     } = candidate
     uniqueCandidates.push({
       ...publicData,
-      footprinterString: orientedString,
+      footprinterString: outputString,
     })
     if (uniqueCandidates.length >= clamp(maxCandidates, 1, 10)) break
   }
