@@ -2158,6 +2158,7 @@ export const rotateFootprint = (
     sourceHints: footprint.sourceHints,
     subtitle: footprint.subtitle,
     title: footprint.title,
+    vias: footprint.vias,
     x: offset.x,
     y: offset.y,
   }

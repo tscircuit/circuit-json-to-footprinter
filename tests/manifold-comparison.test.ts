@@ -23,6 +23,7 @@ const footprint = (pads: PcbSmtPad[]): Footprint => ({
   pads,
   subtitle: "",
   title: "",
+  vias: [],
 })
 
 test("comparison metrics do not depend on heatmap resolution", () => {

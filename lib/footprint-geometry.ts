@@ -11,6 +11,7 @@ import type {
   PcbSmtPadRect,
   PcbSmtPadRotatedPill,
   PcbSmtPadRotatedRect,
+  PcbVia,
   Point,
 } from "circuit-json"
 
@@ -42,6 +43,12 @@ export interface PcbPadGeometry {
   copper: ShapeGeometry
   drill?: ShapeGeometry
   element: PcbPad
+}
+
+export interface PcbViaGeometry {
+  copper: ShapeGeometry
+  drill: ShapeGeometry
+  element: PcbVia
 }
 
 export interface Bounds extends MathBounds {
@@ -365,6 +372,26 @@ export const getPcbHoleGeometry = (hole: PcbHole): ShapeGeometry => {
   }
 }
 
+export const getPcbViaGeometry = (via: PcbVia): PcbViaGeometry => ({
+  copper: {
+    height: via.outer_diameter,
+    rotation: 0,
+    shape: "circle",
+    width: via.outer_diameter,
+    x: via.x,
+    y: via.y,
+  },
+  drill: {
+    height: via.hole_diameter,
+    rotation: 0,
+    shape: "circle",
+    width: via.hole_diameter,
+    x: via.x,
+    y: via.y,
+  },
+  element: via,
+})
+
 export interface GeometryTransform {
   rotation?: number
   x?: number
@@ -409,6 +436,19 @@ export const getTransformedPcbHoleGeometry = (
   hole: PcbHole,
   transform: GeometryTransform,
 ): ShapeGeometry => transformShapeGeometry(getPcbHoleGeometry(hole), transform)
+
+export const getTransformedPcbViaGeometry = (
+  via: PcbVia,
+  transform: GeometryTransform,
+): PcbViaGeometry => {
+  const geometry = getPcbViaGeometry(via)
+
+  return {
+    copper: transformShapeGeometry(geometry.copper, transform),
+    drill: transformShapeGeometry(geometry.drill, transform),
+    element: via,
+  }
+}
 
 export const getPolygonWorldPoints = (shape: ShapeGeometry): Point[] => {
   if (shape.shape !== "polygon" || !shape.points) {

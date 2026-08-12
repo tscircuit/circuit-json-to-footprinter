@@ -47,10 +47,12 @@ and unions, so scores do not depend on a raster resolution. `compareFootprints`
 still returns a raster occupancy map for rendering a visual diff heatmap; that
 map does not affect any comparison metric or discovery ranking.
 
-`Footprint.pads` contains the original `PcbSmtPad | PcbPlatedHole`
-elements and `Footprint.holes` contains the original `PcbHole` elements
-from [`circuit-json`](https://github.com/tscircuit/circuit-json). The converter
-does not expose custom pad or hole types.
+`Footprint.pads` contains the original `PcbSmtPad | PcbPlatedHole` elements,
+`Footprint.holes` contains the original `PcbHole` elements, and
+`Footprint.vias` contains the original `PcbVia` elements from
+[`circuit-json`](https://github.com/tscircuit/circuit-json). Via annuli contribute
+to copper IoU and via drills contribute to hole IoU without changing pad counts.
+The converter does not expose custom pad, hole, or via types.
 
 ## Development
 
