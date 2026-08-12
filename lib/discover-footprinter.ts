@@ -1,5 +1,8 @@
 import { getFootprintNames, getFootprintSizes } from "@tscircuit/footprinter"
-import { summarizeCopperComparison } from "./compare-copper.js"
+import {
+  type PinMismatchDetail,
+  summarizeCopperComparison,
+} from "./compare-copper.js"
 import { type Footprint, footprinterStringToFootprint } from "./footprint.js"
 import {
   type Bounds,
@@ -14,6 +17,7 @@ import {
 
 const MAX_OPTIMIZED_SEEDS = 10
 const OPTIMIZATION_STEPS = 16
+const PIN_MISMATCH_RANKING_WEIGHT = 0.01
 const NUMERIC_PARAMETERS = [
   "p",
   "px",
@@ -276,6 +280,9 @@ export interface FootprinterDiscoveryCandidate {
   geometryScore: number
   holeIntersectionOverUnion: number
   optimizedParameters: Partial<Record<NumericParameter, number>>
+  pinMatchRate: number
+  pinMismatches: PinMismatchDetail[]
+  pinsMatch: boolean
   rankingScore: number
 }
 
@@ -4086,8 +4093,13 @@ export const discoverFootprinterString = (
   )
   const allCandidates = [...optimized, ...seedCandidates]
     .map((candidate): RankedDiscoveryCandidate => {
-      const { copperIntersectionOverUnion, holeIntersectionOverUnion } =
-        summarizeCopperComparison(candidate.footprint, target)
+      const {
+        copperIntersectionOverUnion,
+        holeIntersectionOverUnion,
+        pinMatchRate,
+        pinMismatches,
+        pinsMatch,
+      } = summarizeCopperComparison(candidate.footprint, target)
       const domainScore = getDomainScore(target, candidate.family)
       return {
         copperIntersectionOverUnion,
@@ -4103,11 +4115,17 @@ export const discoverFootprinterString = (
               >)
             : {},
         footprint: candidate.footprint,
+        pinMatchRate,
+        pinMismatches,
+        pinsMatch,
         // Package-name hints disambiguate equivalent geometry through the
         // domainScore sort tie-breaker below. They must not outrank a candidate
-        // with better copper overlap.
+        // with better copper overlap. Pin mismatches apply a bounded tie-break
+        // penalty so pin-correct candidates win when geometry is comparable.
         rankingScore:
-          copperIntersectionOverUnion + (holeIntersectionOverUnion - 1) * 0.12,
+          copperIntersectionOverUnion +
+          (holeIntersectionOverUnion - 1) * 0.12 +
+          (pinMatchRate - 1) * PIN_MISMATCH_RANKING_WEIGHT,
         searchRotation: candidate.searchRotation,
       }
     })
@@ -4116,6 +4134,7 @@ export const discoverFootprinterString = (
         right.rankingScore - left.rankingScore ||
         right.copperIntersectionOverUnion - left.copperIntersectionOverUnion ||
         right.holeIntersectionOverUnion - left.holeIntersectionOverUnion ||
+        right.pinMatchRate - left.pinMatchRate ||
         right.domainScore - left.domainScore ||
         right.geometryScore - left.geometryScore ||
         left.searchRotation - right.searchRotation ||

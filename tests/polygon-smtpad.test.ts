@@ -88,6 +88,9 @@ test("compares polygon copper instead of its bounding rectangle", () => {
   expect(summarizeCopperComparison(square, square, 240)).toEqual({
     copperIntersectionOverUnion: 1,
     holeIntersectionOverUnion: 1,
+    pinMatchRate: 1,
+    pinMismatches: [],
+    pinsMatch: true,
   })
   expect(
     summarizeCopperComparison(square, equivalentRect, 240)

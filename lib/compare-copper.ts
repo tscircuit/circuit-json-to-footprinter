@@ -11,6 +11,7 @@ import {
   getShapeListBounds,
   getTransformedPcbHoleGeometry,
   getTransformedPcbPadGeometry,
+  type PcbPadGeometry,
   rotatePoint,
   type ShapeGeometry,
   toRadians,
@@ -24,7 +25,22 @@ const CURVE_SEGMENTS = 64
 const MANIFOLD_COORDINATE_SCALE = 1_000_000
 const { CrossSection } = await getManifoldModule()
 
-export interface CopperComparisonSummary {
+export interface PinMismatchDetail {
+  leftPadIndex: number | null
+  leftPinNumbers: number[]
+  leftPortHints: string[]
+  rightPadIndex: number | null
+  rightPinNumbers: number[]
+  rightPortHints: string[]
+}
+
+export interface PinComparisonSummary {
+  pinMatchRate: number
+  pinMismatches: PinMismatchDetail[]
+  pinsMatch: boolean
+}
+
+export interface CopperComparisonSummary extends PinComparisonSummary {
   copperIntersectionOverUnion: number
   holeIntersectionOverUnion: number
 }
@@ -33,7 +49,7 @@ export interface CopperComparisonSummary {
  * Comparison metrics are calculated with Manifold boolean operations. The
  * raster fields are retained for the Fast Footprint Compare heatmap.
  */
-export interface RasterComparison {
+export interface RasterComparison extends PinComparisonSummary {
   coverageLeft: number
   coverageRight: number
   gridSize: number
@@ -105,6 +121,106 @@ const getHoleShapes = (footprint: Footprint): ShapeGeometry[] => [
     getTransformedPcbHoleGeometry(hole, footprint),
   ),
 ]
+
+interface IndexedPadGeometry extends PcbPadGeometry {
+  padIndex: number
+}
+
+const getIndexedPadGeometries = (footprint: Footprint): IndexedPadGeometry[] =>
+  footprint.pads.map((pad, padIndex) => ({
+    ...getTransformedPcbPadGeometry(pad, footprint),
+    padIndex,
+  }))
+
+const getNumericPinNumbers = (pad: IndexedPadGeometry | null) => [
+  ...new Set(
+    (pad?.element.port_hints ?? []).flatMap((hint) => {
+      const match = hint.trim().match(/^(?:pin)?(\d+)$/i)
+      return match?.[1] ? [Number.parseInt(match[1], 10)] : []
+    }),
+  ),
+]
+
+const matchPadsByPosition = (
+  leftPads: IndexedPadGeometry[],
+  rightPads: IndexedPadGeometry[],
+) => {
+  const availableRight = new Set(rightPads.map((_, index) => index))
+  const pairs: Array<
+    readonly [IndexedPadGeometry | null, IndexedPadGeometry | null]
+  > = []
+
+  for (const leftPad of leftPads) {
+    let bestIndex = -1
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const rightIndex of availableRight) {
+      const rightPad = rightPads[rightIndex]
+      const distance = Math.hypot(
+        leftPad.copper.x - rightPad.copper.x,
+        leftPad.copper.y - rightPad.copper.y,
+      )
+      if (distance < bestDistance) {
+        bestDistance = distance
+        bestIndex = rightIndex
+      }
+    }
+
+    if (bestIndex === -1) {
+      pairs.push([leftPad, null])
+      continue
+    }
+    availableRight.delete(bestIndex)
+    pairs.push([leftPad, rightPads[bestIndex]])
+  }
+
+  for (const rightIndex of availableRight) {
+    pairs.push([null, rightPads[rightIndex]])
+  }
+  return pairs
+}
+
+const comparePinHints = (
+  left: Footprint,
+  right: Footprint,
+): PinComparisonSummary => {
+  const pairs = matchPadsByPosition(
+    getIndexedPadGeometries(left),
+    getIndexedPadGeometries(right),
+  )
+  const pinMismatches: PinMismatchDetail[] = []
+  let comparedPinCount = 0
+  let matchedPinCount = 0
+
+  for (const [leftPad, rightPad] of pairs) {
+    const leftPinNumbers = getNumericPinNumbers(leftPad)
+    const rightPinNumbers = getNumericPinNumbers(rightPad)
+    if (leftPinNumbers.length === 0 && rightPinNumbers.length === 0) continue
+
+    comparedPinCount += 1
+    if (
+      leftPinNumbers.some((pinNumber) => rightPinNumbers.includes(pinNumber))
+    ) {
+      matchedPinCount += 1
+      continue
+    }
+
+    pinMismatches.push({
+      leftPadIndex: leftPad?.padIndex ?? null,
+      leftPinNumbers,
+      leftPortHints: leftPad?.element.port_hints ?? [],
+      rightPadIndex: rightPad?.padIndex ?? null,
+      rightPinNumbers,
+      rightPortHints: rightPad?.element.port_hints ?? [],
+    })
+  }
+
+  return {
+    pinMatchRate:
+      comparedPinCount === 0 ? 1 : matchedPinCount / comparedPinCount,
+    pinMismatches,
+    pinsMatch: pinMismatches.length === 0,
+  }
+}
 
 const pointInShape = (x: number, y: number, shape: ShapeGeometry) => {
   const dx = x - shape.x
@@ -417,12 +533,14 @@ const compareNormalizedFootprints = (left: Footprint, right: Footprint) => {
   const leftCopper = getCopperShapes(normalizedLeft)
   const rightCopper = getCopperShapes(normalizedRight)
   const comparison = compareShapesWithManifold(leftCopper, rightCopper)
+  const pinComparison = comparePinHints(normalizedLeft, normalizedRight)
 
   return {
     comparison,
     leftCopper,
     normalizedLeft,
     normalizedRight,
+    pinComparison,
     rightCopper,
   }
 }
@@ -437,6 +555,7 @@ export const compareFootprints = (
     leftCopper,
     normalizedLeft,
     normalizedRight,
+    pinComparison,
     rightCopper,
   } = compareNormalizedFootprints(left, right)
 
@@ -450,6 +569,7 @@ export const compareFootprints = (
     normalizedRight,
     occupancy: rasterizeOccupancy(leftCopper, rightCopper, gridSize),
     padCountMatch: normalizedLeft.pads.length === normalizedRight.pads.length,
+    ...pinComparison,
     rightOnlyRatio: comparison.rightOnlyRatio,
   }
 }
@@ -459,7 +579,7 @@ export const summarizeCopperComparison = (
   right: Footprint,
   _gridSize = DEFAULT_GRID_SIZE,
 ): CopperComparisonSummary => {
-  const { comparison, normalizedLeft, normalizedRight } =
+  const { comparison, normalizedLeft, normalizedRight, pinComparison } =
     compareNormalizedFootprints(left, right)
   const leftHoles = getHoleShapes(normalizedLeft)
   const rightHoles = getHoleShapes(normalizedRight)
@@ -471,5 +591,6 @@ export const summarizeCopperComparison = (
   return {
     copperIntersectionOverUnion: comparison.iou,
     holeIntersectionOverUnion,
+    ...pinComparison,
   }
 }

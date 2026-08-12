@@ -304,17 +304,28 @@ test("recovers C566239 SM02B-SURS as a JST-style SMD connector", async () => {
   expect(result.best!.copperIntersectionOverUnion).toBe(1)
 })
 
-test("recovers C265284 B2B-ZR with similarly sized mounting pads", async () => {
+test("prefers matching C265284 pin numbers over its JST domain hint", async () => {
   const result = await expectFootprintRecovery({
     FootprintComponent: B2bZr,
     sourceHints: ["C265284 B2B-ZR-SM4-TF(LF)(SN) SMD P=1.5mm"],
   })
 
-  expect(result.best!.family).toBe("jst")
+  expect(result.best!.family).toBe("fpc")
   expect(result.best!.footprinterString).toBe(
-    "jst2_smd_mounttop_p1.5mm_pw0.7mm_pl3.8mm_mpx5.6mm_mpy2.15mm_mpw1.5mm_mpl2.3mm",
+    "fpc2_mounttop_p1.5mm_pw0.7mm_pl3.8mm_mpx5.6mm_mpy2.15mm_mpw1.5mm_mpl2.3mm",
   )
   expect(result.best!.copperIntersectionOverUnion).toBe(1)
+  expect(result.best!.pinsMatch).toBe(true)
+
+  const jstCandidate = result.candidates.find(
+    (candidate) => candidate.family === "jst",
+  )
+  expect(jstCandidate).toMatchObject({
+    copperIntersectionOverUnion: 1,
+    pinMatchRate: 0.5,
+    pinsMatch: false,
+  })
+  expect(jstCandidate!.rankingScore).toBeLessThan(result.best!.rankingScore)
 })
 
 test("renders the two-contact connector footprint", async () => {

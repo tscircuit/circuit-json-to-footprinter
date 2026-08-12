@@ -176,6 +176,8 @@ test("encodes a rotated match in the footprinter string", () => {
   expect(result.best?.footprinterString).toContain("pin1location(")
   expect(result.best).not.toHaveProperty("pcbRotation")
   expect(result.best?.copperIntersectionOverUnion).toBe(1)
+  expect(result.best?.pinMatchRate).toBe(1)
+  expect(result.best?.pinsMatch).toBe(true)
   expect(circuitJsonFromFootprinter(result.best!.footprinterString)).toEqual(
     circuitJsonFromFootprinter(source),
   )

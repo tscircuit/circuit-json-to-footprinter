@@ -48,6 +48,9 @@ test("reports perfect hole IoU when neither footprint has holes", () => {
   expect(summarizeCopperComparison(smd, smd)).toEqual({
     copperIntersectionOverUnion: 1,
     holeIntersectionOverUnion: 1,
+    pinMatchRate: 1,
+    pinMismatches: [],
+    pinsMatch: true,
   })
 })
 

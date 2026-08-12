@@ -25,7 +25,10 @@ console.log(result.best?.footprinterString)
 ```
 
 The result includes the best self-contained footprinter string, ranked alternatives,
-geometry scores, copper/hole IoU, optimized parameters, and search diagnostics. When a
+geometry scores, copper/hole IoU, numeric pin matching metrics, optimized parameters,
+and search diagnostics. `pinMatchRate`, `pinsMatch`, and `pinMismatches` compare
+numeric `port_hints` on position-matched pads. Pin mismatches reduce a candidate's
+ranking score, while footprints without numeric pin hints receive no pin penalty. When a
 match requires rotation, its string includes a `pin1location(...)` modifier; no
 separate `pcbRotation` is emitted. The modifier names the edge containing pin 1,
 then its alignment along that edge. For example, `pin1location(leftside,top)` means
