@@ -1,4 +1,4 @@
-import { fp } from "@tscircuit/footprinter"
+import { type FootprinterParamsBuilder, fp } from "@tscircuit/footprinter"
 import type {
   AnyCircuitElement,
   PcbHole,
@@ -74,8 +74,11 @@ export const footprinterStringToFootprint = (
   const builder = fp.string(normalized)
   const usesRectangularBgaPads =
     /^bga(?:\d|_)/i.test(normalized) && /_rectpads(?:_|$)/i.test(normalized)
+  // string() is typed without family modifiers, but returns the same proxy as bga().
+  const bgaBuilder =
+    builder as unknown as FootprinterParamsBuilder<"circularpads">
   const circuitJson = usesRectangularBgaPads
-    ? builder.circularpads(false).circuitJson()
+    ? bgaBuilder.circularpads(false).circuitJson()
     : builder.circuitJson()
 
   return circuitJsonToFootprint(circuitJson, {
