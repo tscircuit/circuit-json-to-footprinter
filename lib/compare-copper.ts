@@ -12,6 +12,7 @@ import {
   getTransformedPcbHoleGeometry,
   getTransformedPcbPadGeometry,
   type PcbPadGeometry,
+  getTransformedPcbViaGeometry,
   rotatePoint,
   type ShapeGeometry,
   toRadians,
@@ -96,6 +97,7 @@ const translateFootprint = (
     sourceHints: footprint.sourceHints,
     subtitle: footprint.subtitle,
     title: footprint.title,
+    vias: footprint.vias,
     x: (footprint.x ?? 0) + deltaX,
     y: (footprint.y ?? 0) + deltaY,
   }
@@ -107,10 +109,14 @@ const centerFootprint = (footprint: Footprint): Footprint => {
   return translateFootprint(footprint, -center.x, -center.y)
 }
 
-const getCopperShapes = (footprint: Footprint): ShapeGeometry[] =>
-  footprint.pads.map(
+const getCopperShapes = (footprint: Footprint): ShapeGeometry[] => [
+  ...footprint.pads.map(
     (pad) => getTransformedPcbPadGeometry(pad, footprint).copper,
-  )
+  ),
+  ...footprint.vias.map(
+    (via) => getTransformedPcbViaGeometry(via, footprint).copper,
+  ),
+]
 
 const getHoleShapes = (footprint: Footprint): ShapeGeometry[] => [
   ...footprint.pads.flatMap((pad) => {
@@ -119,6 +125,9 @@ const getHoleShapes = (footprint: Footprint): ShapeGeometry[] => [
   }),
   ...footprint.holes.map((hole) =>
     getTransformedPcbHoleGeometry(hole, footprint),
+  ),
+  ...footprint.vias.map(
+    (via) => getTransformedPcbViaGeometry(via, footprint).drill,
   ),
 ]
 

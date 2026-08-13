@@ -255,6 +255,7 @@ test("rotates non-plated holes using their Circuit JSON shape types", () => {
       pads: [smtPad],
       subtitle: "",
       title: "",
+      vias: [],
     },
     90,
   )

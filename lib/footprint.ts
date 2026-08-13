@@ -4,6 +4,7 @@ import type {
   PcbHole,
   PcbPlatedHole,
   PcbSmtPad,
+  PcbVia,
 } from "circuit-json"
 import { validatePcbPad } from "./footprint-geometry.js"
 
@@ -14,6 +15,7 @@ export interface Footprint {
   sourceHints?: string[]
   subtitle: string
   title: string
+  vias: PcbVia[]
   x?: number
   y?: number
 }
@@ -32,12 +34,16 @@ const isPcbPad = (
 const isPcbHole = (element: AnyCircuitElement): element is PcbHole =>
   element.type === "pcb_hole"
 
+const isPcbVia = (element: AnyCircuitElement): element is PcbVia =>
+  element.type === "pcb_via"
+
 export const circuitJsonToFootprint = (
   circuitJson: readonly AnyCircuitElement[],
   options: CircuitJsonToFootprintOptions = {},
 ): Footprint => {
   const pads = circuitJson.filter(isPcbPad)
   const holes = circuitJson.filter(isPcbHole)
+  const vias = circuitJson.filter(isPcbVia)
 
   if (pads.length === 0) {
     throw new Error(
@@ -54,6 +60,7 @@ export const circuitJsonToFootprint = (
     sourceHints: options.sourceHints,
     subtitle: options.subtitle ?? "Circuit JSON footprint",
     title: options.title ?? "Circuit JSON",
+    vias,
     x: 0,
     y: 0,
   }
