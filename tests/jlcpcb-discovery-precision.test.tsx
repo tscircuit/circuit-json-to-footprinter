@@ -366,7 +366,7 @@ test("recovers C181551 as a six-pad BGA grid", async () => {
   })
 
   expect(result.best!.footprinterString).toBe(
-    "bga6_grid3x2_p0.4001mm_pad0.184mm_pin1location(rightside,top)",
+    "bga6_grid3x2_p0.4001mm_pad0.184mm_rectpads_pin1location(rightside,top)",
   )
 })
 
@@ -377,7 +377,7 @@ test("recovers C5220159 as a four-pad BGA grid at 5 um pad precision", async () 
   })
 
   expect(result.best!.footprinterString).toBe(
-    "bga4_grid2x2_p0.35mm_pad0.165mm_pin1location(leftside,top)",
+    "bga4_grid2x2_p0.35mm_pad0.165mm_rectpads_pin1location(leftside,top)",
   )
 })
 

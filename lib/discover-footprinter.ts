@@ -2904,7 +2904,7 @@ const getBgaGridSeed = (target: Footprint) => {
     }
   }
 
-  return `bga${pads.length}_grid${columns.length}x${rows.length}_p${formatPreciseLength(pitch)}_pad${formatPreciseLength(pad)}`
+  return `bga${pads.length}_grid${columns.length}x${rows.length}_p${formatPreciseLength(pitch)}_pad${formatPreciseLength(pad)}_rectpads`
 }
 
 const getStaggeredSmdPinHeaderSeed = (target: Footprint) => {
