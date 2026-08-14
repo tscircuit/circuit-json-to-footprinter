@@ -19,7 +19,7 @@ import {
 const MAX_OPTIMIZED_SEEDS = 10
 const OPTIMIZATION_STEPS = 16
 const PIN_MISMATCH_RANKING_WEIGHT = 0.01
-const MIN_HINTED_PASSIVE_COPPER_IOU = 0.95
+const MIN_HINTED_PASSIVE_COPPER_IOU = 0.96
 const NUMERIC_PARAMETERS = [
   "p",
   "px",
@@ -2463,6 +2463,17 @@ const getHintedPassiveSize = (target: Footprint, analysis: TargetAnalysis) => {
   return hintedSizes.at(-1)
 }
 
+const getHintedPassiveSizePreference = (
+  footprinterString: string,
+  hintedSize: string,
+) => {
+  if (new RegExp(`^${hintedSize}(?:_|$)`).test(footprinterString)) return 2
+  if (new RegExp(`^(?:res|cap)${hintedSize}(?:_|$)`).test(footprinterString)) {
+    return 1
+  }
+  return 0
+}
+
 const getFamily = (footprinterString: string) => {
   if (/^\d{4,5}(?:_|$)/.test(footprinterString)) return "res"
   return (
@@ -3805,7 +3816,15 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   }
 
   if (padCount === 2 && analysis.platedHoleCount === 0) {
-    const padBounds = getCopperShapes(target).map(getPadBounds)
+    const targetCopperShapes = getCopperShapes(target)
+    const padBounds = targetCopperShapes.map(getPadBounds)
+    const rectCornerRadii = targetCopperShapes.flatMap((pad) =>
+      pad.shape === "rect" ? [pad.cornerRadius ?? 0] : [],
+    )
+    const roundedModifier =
+      rectCornerRadii.length === padCount
+        ? `_rounded${formatLength(median(rectCornerRadii))}`
+        : ""
     const passiveDimensions = `p${formatLength(
       analysis.heuristics.p,
     )}_pw${formatLength(
@@ -3817,6 +3836,11 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       seeds.add(size.imperial)
       seeds.add(`cap${size.imperial}`)
       seeds.add(`res${size.imperial}`)
+      if (roundedModifier) {
+        seeds.add(`${size.imperial}${roundedModifier}`)
+        seeds.add(`cap${size.imperial}${roundedModifier}`)
+        seeds.add(`res${size.imperial}${roundedModifier}`)
+      }
     }
   }
 
@@ -4308,10 +4332,23 @@ export const discoverFootprinterString = (
     ? allCandidates
         .filter(
           ({ copperIntersectionOverUnion, footprinterString }) =>
-            footprinterString === hintedPassiveSize &&
+            getHintedPassiveSizePreference(
+              footprinterString,
+              hintedPassiveSize,
+            ) > 0 &&
             copperIntersectionOverUnion >= MIN_HINTED_PASSIVE_COPPER_IOU,
         )
-        .toSorted(compareCandidateQuality)[0]
+        .toSorted(
+          (left, right) =>
+            getHintedPassiveSizePreference(
+              right.footprinterString,
+              hintedPassiveSize,
+            ) -
+              getHintedPassiveSizePreference(
+                left.footprinterString,
+                hintedPassiveSize,
+              ) || compareCandidateQuality(left, right),
+        )[0]
     : undefined
   allCandidates.sort((left, right) => {
     // JLCPCB's explicit package size is more useful than reproducing small

@@ -21,16 +21,22 @@ const rectPad = (
 
 const cases = [
   {
-    expectedFootprinterString: "0603",
+    expectedFootprinterString: "0603_rounded0mm",
     name: "0603 within tolerance",
     sourceHint: "0603",
     pads: [rectPad(1, -0.82, 0.8, 0.95), rectPad(2, 0.82, 0.8, 0.95)],
   },
   {
-    expectedFootprinterString: "0402",
+    expectedFootprinterString: "0402_rounded0mm",
     name: "0402 within tolerance",
     sourceHint: "0402",
     pads: [rectPad(1, -0.505, 0.54, 0.64), rectPad(2, 0.505, 0.54, 0.64)],
+  },
+  {
+    expectedFootprinterString: "0805_rounded0mm",
+    name: "0805 within tolerance",
+    sourceHint: "0805",
+    pads: [rectPad(1, -0.9075, 1.025, 1.4), rectPad(2, 0.9075, 1.025, 1.4)],
   },
 ]
 
@@ -43,10 +49,27 @@ for (const { expectedFootprinterString, name, pads, sourceHint } of cases) {
 
     expect(result.best?.footprinterString).toBe(expectedFootprinterString)
     expect(result.best?.copperIntersectionOverUnion).toBeGreaterThanOrEqual(
-      0.95,
+      0.96,
     )
   })
 }
+
+test("requires 96% copper IoU before preferring a package hint", () => {
+  const result = circuitJsonToFootprinter(
+    [
+      rectPad(1, -0.805, 0.8, 0.95),
+      rectPad(2, 0.805, 0.8, 0.95),
+    ] as AnyCircuitElement[],
+    { maxCandidates: 10, sourceHints: ["0603"] },
+  )
+
+  const canonicalCandidate = result.candidates.find(
+    ({ footprinterString }) => footprinterString === "0603_rounded0mm",
+  )
+  expect(canonicalCandidate?.copperIntersectionOverUnion).toBeGreaterThan(0.95)
+  expect(canonicalCandidate?.copperIntersectionOverUnion).toBeLessThan(0.96)
+  expect(result.best?.footprinterString).toStartWith("res_p")
+})
 
 test("does not prefer a hinted package below the copper IoU tolerance", () => {
   const result = circuitJsonToFootprinter(
@@ -63,7 +86,7 @@ test("does not prefer a hinted package below the copper IoU tolerance", () => {
   const canonicalCandidate = result.candidates.find(
     ({ footprinterString }) => footprinterString === "0603",
   )
-  expect(canonicalCandidate?.copperIntersectionOverUnion).toBeLessThan(0.95)
+  expect(canonicalCandidate?.copperIntersectionOverUnion).toBeLessThan(0.96)
   expect(result.best?.footprinterString).toStartWith("res_p")
 })
 
