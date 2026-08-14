@@ -3,7 +3,9 @@ import type { AnyCircuitElement, PcbSmtPad, PcbVia } from "circuit-json"
 import { convertCircuitJsonToPcbSvg } from "circuit-to-svg"
 import {
   circuitJsonToFootprint,
+  circuitJsonToFootprinter,
   compareFootprints,
+  footprinterStringToFootprint,
   summarizeCopperComparison,
 } from "../lib/index.js"
 
@@ -139,4 +141,24 @@ test("renders the C2871569 4x4 thermal-via array", () => {
   expect(
     convertCircuitJsonToPcbSvg([...footprint.pads, ...footprint.vias]),
   ).toMatchSvgSnapshot(import.meta.path, "C2871569-thermal-vias")
+})
+
+test("discovers C2871569 with its QFN thermal-via parameters", () => {
+  const discovery = circuitJsonToFootprinter(c2871569CircuitJson, {
+    maxCandidates: 5,
+    sourceHints: ["C2871569", "QFN-64"],
+    title: "C2871569",
+  })
+  const best = discovery.best
+
+  expect(best).not.toBeNull()
+  expect(best!.family).toBe("qfn")
+  expect(best!.footprinterString).toContain("_thermalvias4x4")
+  expect(best!.footprinterString).toContain("_thermalviapitch1mm")
+  expect(best!.footprinterString).toContain("_thermalviaid0.3048mm")
+  expect(best!.footprinterString).toContain("_thermalviaod0.6096mm")
+  expect(best!.holeIntersectionOverUnion).toBeGreaterThan(0.99)
+
+  const recovered = footprinterStringToFootprint(best!.footprinterString)
+  expect(recovered.vias).toHaveLength(16)
 })

@@ -10,6 +10,7 @@ import {
   getShapeListBounds,
   getTransformedPcbHoleGeometry,
   getTransformedPcbPadGeometry,
+  getTransformedPcbViaGeometry,
   type PcbPadGeometry,
   rotatePoint,
   type ShapeGeometry,
@@ -107,9 +108,18 @@ interface TargetAnalysis {
     xOffset: number
     yOffset: number
   }
+  thermalViaGrid?: ThermalViaGridAnalysis
   topology: Topology
   twoPadSmd?: TwoPadSmdAnalysis
   verticalSidePadCount: number
+}
+
+interface ThermalViaGridAnalysis {
+  columns: number
+  holeDiameter: number
+  outerDiameter: number
+  pitch: number
+  rows: number
 }
 
 interface QuadSidePadCounts {
@@ -400,6 +410,112 @@ const clusterCoordinates = (values: number[], tolerance: number) => {
   }
 
   return clusters.map(median)
+}
+
+const getRegularPitch = (coordinates: number[], tolerance: number) => {
+  if (coordinates.length < 2) return undefined
+  const differences = coordinates
+    .slice(1)
+    .map((coordinate, index) => coordinate - coordinates[index])
+  const pitch = median(differences)
+  return differences.every(
+    (difference) => Math.abs(difference - pitch) <= tolerance,
+  )
+    ? pitch
+    : null
+}
+
+const analyzeThermalViaGrid = (
+  target: Footprint,
+  thermalPad: ShapeGeometry | undefined,
+): ThermalViaGridAnalysis | undefined => {
+  if (!thermalPad || target.vias.length === 0) return undefined
+
+  const thermalPadBounds = getPadBounds(thermalPad)
+  const transformedVias = target.vias.map((via) =>
+    getTransformedPcbViaGeometry(via, target),
+  )
+  const medianOuterDiameter = median(
+    transformedVias.map(({ copper }) => copper.width),
+  )
+  const tolerance = Math.max(medianOuterDiameter * 0.08, 0.01)
+  const thermalVias = transformedVias.filter(
+    ({ copper }) =>
+      copper.x >= thermalPadBounds.minX - tolerance &&
+      copper.x <= thermalPadBounds.maxX + tolerance &&
+      copper.y >= thermalPadBounds.minY - tolerance &&
+      copper.y <= thermalPadBounds.maxY + tolerance,
+  )
+  if (thermalVias.length === 0) return undefined
+
+  const xCoordinates = clusterCoordinates(
+    thermalVias.map(({ copper }) => copper.x),
+    tolerance,
+  )
+  const yCoordinates = clusterCoordinates(
+    thermalVias.map(({ copper }) => copper.y),
+    tolerance,
+  )
+  if (xCoordinates.length * yCoordinates.length !== thermalVias.length) {
+    return undefined
+  }
+
+  const occupiedPositions = new Set(
+    thermalVias.map(({ copper }) => {
+      const column = xCoordinates.findIndex(
+        (coordinate) => Math.abs(coordinate - copper.x) <= tolerance,
+      )
+      const row = yCoordinates.findIndex(
+        (coordinate) => Math.abs(coordinate - copper.y) <= tolerance,
+      )
+      return `${column}:${row}`
+    }),
+  )
+  if (
+    occupiedPositions.has("-1:-1") ||
+    occupiedPositions.size !== thermalVias.length
+  ) {
+    return undefined
+  }
+
+  const pitchX = getRegularPitch(xCoordinates, tolerance)
+  const pitchY = getRegularPitch(yCoordinates, tolerance)
+  if (pitchX === null || pitchY === null) return undefined
+  const pitches = [pitchX, pitchY].filter(
+    (pitch): pitch is number => pitch !== undefined,
+  )
+  if (pitches.length === 2 && Math.abs(pitches[0] - pitches[1]) > tolerance) {
+    return undefined
+  }
+  const pitch = pitches.length > 0 ? median(pitches) : 1
+
+  const gridCenterX =
+    (xCoordinates[0] + xCoordinates[xCoordinates.length - 1]) / 2
+  const gridCenterY =
+    (yCoordinates[0] + yCoordinates[yCoordinates.length - 1]) / 2
+  if (
+    Math.abs(gridCenterX - thermalPad.x) > tolerance ||
+    Math.abs(gridCenterY - thermalPad.y) > tolerance
+  ) {
+    return undefined
+  }
+
+  const holeDiameter = median(thermalVias.map(({ drill }) => drill.width))
+  const outerDiameter = median(thermalVias.map(({ copper }) => copper.width))
+  const hasUniformDiameters = thermalVias.every(
+    ({ copper, drill }) =>
+      Math.abs(copper.width - outerDiameter) <= tolerance &&
+      Math.abs(drill.width - holeDiameter) <= tolerance,
+  )
+  if (!hasUniformDiameters || outerDiameter < holeDiameter) return undefined
+
+  return {
+    columns: xCoordinates.length,
+    holeDiameter,
+    outerDiameter,
+    pitch,
+    rows: yCoordinates.length,
+  }
 }
 
 const getPitchEstimate = (pads: ShapeGeometry[], tolerance: number) => {
@@ -2116,6 +2232,7 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
           yOffset: thermalPadEntry.pad.y - topologyCenterY,
         }
       : undefined,
+    thermalViaGrid: analyzeThermalViaGrid(target, thermalPadEntry?.pad),
     topology,
     twoPadSmd: analyzeTwoPadSmd(target),
     usbCMidMount: getUsbCMidMountGeometry(target),
@@ -3602,9 +3719,32 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       const familySeed = `${family}${analysis.perimeterPadCount}${
         quadSidePinSuffix ? `_${quadSidePinSuffix}` : ""
       }`
-      seeds.add(`${familySeed}_thermalpad`)
+      const addThermalPadSeed = (seed: string) => {
+        seeds.add(seed)
+        if (family !== "qfn" || !analysis.thermalViaGrid) return
+
+        const { columns, holeDiameter, outerDiameter, pitch, rows } =
+          analysis.thermalViaGrid
+        const gridOptions = new Set([
+          `${columns}x${rows}`,
+          `${rows}x${columns}`,
+        ])
+        for (const grid of gridOptions) {
+          seeds.add(
+            [
+              seed,
+              `thermalvias${grid}`,
+              `thermalviapitch${formatPreciseLength(pitch)}`,
+              `thermalviaid${formatPreciseLength(holeDiameter)}`,
+              `thermalviaod${formatPreciseLength(outerDiameter)}`,
+            ].join("_"),
+          )
+        }
+      }
+
+      addThermalPadSeed(`${familySeed}_thermalpad`)
       for (const thermalPadDimensions of thermalPadDimensionOptions) {
-        seeds.add(`${familySeed}_thermalpad${thermalPadDimensions}`)
+        addThermalPadSeed(`${familySeed}_thermalpad${thermalPadDimensions}`)
       }
     }
   }
