@@ -37,6 +37,48 @@ const isPcbHole = (element: AnyCircuitElement): element is PcbHole =>
 const isPcbVia = (element: AnyCircuitElement): element is PcbVia =>
   element.type === "pcb_via"
 
+const SOURCE_COMPONENT_FAMILY_HINTS: Record<string, string> = {
+  simple_capacitor: "capacitor",
+  simple_diode: "diode",
+  simple_led: "led",
+  simple_resistor: "resistor",
+}
+
+const getSourceComponentFamilyHints = (
+  circuitJson: readonly AnyCircuitElement[],
+  pads: Array<PcbSmtPad | PcbPlatedHole>,
+) => {
+  const pcbComponentIds = new Set(
+    pads.flatMap((pad) => (pad.pcb_component_id ? [pad.pcb_component_id] : [])),
+  )
+  if (pcbComponentIds.size === 0) return []
+
+  const sourceComponentIds = new Set(
+    circuitJson.flatMap((element) =>
+      element.type === "pcb_component" &&
+      pcbComponentIds.has(element.pcb_component_id)
+        ? [element.source_component_id]
+        : [],
+    ),
+  )
+
+  return [
+    ...new Set(
+      circuitJson.flatMap((element) => {
+        if (
+          element.type !== "source_component" ||
+          !sourceComponentIds.has(element.source_component_id) ||
+          !element.ftype
+        ) {
+          return []
+        }
+        const hint = SOURCE_COMPONENT_FAMILY_HINTS[element.ftype]
+        return hint ? [hint] : []
+      }),
+    ),
+  ]
+}
+
 export const circuitJsonToFootprint = (
   circuitJson: readonly AnyCircuitElement[],
   options: CircuitJsonToFootprintOptions = {},
@@ -53,11 +95,19 @@ export const circuitJsonToFootprint = (
 
   pads.forEach(validatePcbPad)
 
+  const sourceComponentFamilyHints = getSourceComponentFamilyHints(
+    circuitJson,
+    pads,
+  )
+
   return {
     holes,
     pads,
     rotation: 0,
-    sourceHints: options.sourceHints,
+    sourceHints: [
+      ...(options.sourceHints ?? []),
+      ...sourceComponentFamilyHints,
+    ],
     subtitle: options.subtitle ?? "Circuit JSON footprint",
     title: options.title ?? "Circuit JSON",
     vias,

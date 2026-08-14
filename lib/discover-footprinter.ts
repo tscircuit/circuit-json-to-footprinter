@@ -2422,6 +2422,7 @@ const getDomainScore = (target: Footprint, family: string) => {
   const description = `${target.title} ${target.subtitle} ${
     target.sourceHints?.join(" ") ?? ""
   }`.toLowerCase()
+  const normalizedDescription = description.replace(/[^a-z0-9]+/g, "")
   const aliases: Record<string, string[]> = {
     cap: ["capacitor", "cap"],
     d2pak: ["d2pak", "to-263", "to263"],
@@ -2441,7 +2442,16 @@ const getDomainScore = (target: Footprint, family: string) => {
     smdslideswitch: ["slide switch", "slideswitch", "msk12"],
   }
   const terms = aliases[family] ?? [family]
-  return terms.some((term) => description.includes(term)) ? 1 : 0
+  return terms.some((term) => {
+    if (description.includes(term)) return true
+    const normalizedTerm = term.replace(/[^a-z0-9]+/g, "")
+    return (
+      normalizedTerm.length >= 4 &&
+      normalizedDescription.includes(normalizedTerm)
+    )
+  })
+    ? 1
+    : 0
 }
 
 const getFamily = (footprinterString: string) => {
@@ -3311,6 +3321,25 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
         `p2x${formatPreciseLength(pin2Offset)}`,
       ].join("_"),
     )
+  }
+
+  if (analysis.twoPadSmd) {
+    const { padHeight, pin1Offset, pin1Width, pin2Offset, pin2Width } =
+      analysis.twoPadSmd
+    const pitch = Math.abs(pin2Offset - pin1Offset)
+    const padWidth = median([pin1Width, pin2Width])
+    for (const family of ["cap", "diode", "res"]) {
+      const parameters = [
+        family,
+        `p${formatPreciseLength(pitch)}`,
+        `pw${formatPreciseLength(padWidth)}`,
+        `ph${formatPreciseLength(padHeight)}`,
+      ]
+      // The generic diode defaults to rounded pads, while imported JLCPCB
+      // pads are rectangular unless Circuit JSON specifies a corner radius.
+      if (family === "diode") parameters.push("rounded0")
+      seeds.add(parameters.join("_"))
+    }
   }
 
   if (analysis.dpak) {

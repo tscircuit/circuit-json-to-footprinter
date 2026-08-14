@@ -14,6 +14,36 @@ import {
 const circuitJsonFromFootprinter = (footprinterString: string) =>
   fp.string(footprinterString).circuitJson()
 
+const circuitJsonWithSourceComponentType = (
+  footprinterString: string,
+  ftype: "simple_capacitor" | "simple_diode" | "simple_resistor",
+) => {
+  const pcbComponentId = "pcb_component_1"
+  const sourceComponentId = "source_component_1"
+  return [
+    {
+      type: "source_component",
+      ftype,
+      source_component_id: sourceComponentId,
+    },
+    {
+      type: "pcb_component",
+      pcb_component_id: pcbComponentId,
+      source_component_id: sourceComponentId,
+      center: { x: 0, y: 0 },
+      width: 1,
+      height: 1,
+      layer: "top",
+      rotation: 0,
+    },
+    ...circuitJsonFromFootprinter(footprinterString).map((element) =>
+      element.type === "pcb_smtpad" || element.type === "pcb_plated_hole"
+        ? { ...element, pcb_component_id: pcbComponentId }
+        : element,
+    ),
+  ] as AnyCircuitElement[]
+}
+
 const rotatedCircuitJsonFromFootprinter = (
   footprinterString: string,
   rotation: 90 | 270,
@@ -263,4 +293,34 @@ test("accepts readonly Circuit JSON", () => {
   const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 1 })
 
   expect(result.best).not.toBeNull()
+})
+
+test("uses the source component type to distinguish capacitor footprints", () => {
+  const result = circuitJsonToFootprinter(
+    circuitJsonWithSourceComponentType(
+      "res_p1.400048mm_pw0.7999984mm_ph0.8999982mm",
+      "simple_capacitor",
+    ),
+    { maxCandidates: 3 },
+  )
+
+  expect(result.best?.family).toBe("cap")
+  expect(result.best?.footprinterString).toStartWith("cap_")
+  expect(result.best?.footprinterString).not.toStartWith("res_")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
+})
+
+test("builds a dimensioned diode seed for JLCPCB-style pads", () => {
+  const result = circuitJsonToFootprinter(
+    circuitJsonWithSourceComponentType(
+      "res_p2.344928mm_pw0.999998mm_ph0.6999986mm",
+      "simple_diode",
+    ),
+    { maxCandidates: 3 },
+  )
+
+  expect(result.best?.family).toBe("diode")
+  expect(result.best?.footprinterString).toStartWith("diode_")
+  expect(result.best?.footprinterString).not.toStartWith("res_")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
 })
