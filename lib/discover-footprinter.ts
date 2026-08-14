@@ -19,6 +19,7 @@ import {
 const MAX_OPTIMIZED_SEEDS = 10
 const OPTIMIZATION_STEPS = 16
 const PIN_MISMATCH_RANKING_WEIGHT = 0.01
+const MIN_HINTED_PASSIVE_COPPER_IOU = 0.95
 const NUMERIC_PARAMETERS = [
   "p",
   "px",
@@ -4306,7 +4307,9 @@ export const discoverFootprinterString = (
   const preferredPassiveCandidate = hintedPassiveSize
     ? allCandidates
         .filter(
-          ({ footprinterString }) => footprinterString === hintedPassiveSize,
+          ({ copperIntersectionOverUnion, footprinterString }) =>
+            footprinterString === hintedPassiveSize &&
+            copperIntersectionOverUnion >= MIN_HINTED_PASSIVE_COPPER_IOU,
         )
         .toSorted(compareCandidateQuality)[0]
     : undefined
