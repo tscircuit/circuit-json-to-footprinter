@@ -2432,6 +2432,7 @@ const getDomainScore = (target: Footprint, family: string) => {
     fpc: ["fpc", "ffc", "flat flexible"],
     jst: ["jst", "smd p=", "smd,p=", "wire-to-board", "wire to board"],
     lga: ["lga"],
+    passive: ["passive", "fuse", "inductor"],
     qfn: ["qfn"],
     res: ["resistor", "res"],
     soic: ["soic", "so-"],
@@ -2485,7 +2486,9 @@ const getHintedPassiveSizePreference = (
 }
 
 const getFamily = (footprinterString: string) => {
-  if (/^\d{4,5}(?:_|$)/.test(footprinterString)) return "res"
+  if (/^(?:\d{4,5}|smdpads2)(?:_|$)/i.test(footprinterString)) {
+    return "passive"
+  }
   return (
     [...getFootprintNames()]
       .sort((left, right) => right.length - left.length)
@@ -3358,7 +3361,11 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       analysis.twoPadSmd
     const pitch = Math.abs(pin2Offset - pin1Offset)
     const padWidth = median([pin1Width, pin2Width])
-    for (const family of ["cap", "diode", "res"]) {
+    // Two-pad copper geometry alone cannot distinguish a resistor, capacitor,
+    // diode, LED, inductor, or fuse. Keep a neutral candidate alongside the
+    // type-specific passive definitions so ambiguous inputs never acquire a
+    // misleading component type from a geometry tie.
+    for (const family of ["smdpads2", "cap", "diode", "res"]) {
       const parameters = [
         family,
         `p${formatPreciseLength(pitch)}`,
@@ -3368,6 +3375,16 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       // The generic diode defaults to rounded pads, while imported JLCPCB
       // pads are rectangular unless Circuit JSON specifies a corner radius.
       if (family === "diode") parameters.push("rounded0")
+      if (family === "smdpads2") {
+        const cornerRadii = getCopperShapes(target).flatMap((pad) =>
+          pad.shape === "rect" && (pad.cornerRadius ?? 0) > 0
+            ? [pad.cornerRadius!]
+            : [],
+        )
+        if (cornerRadii.length === 2) {
+          parameters.push(`rounded${formatPreciseLength(median(cornerRadii))}`)
+        }
+      }
       seeds.add(parameters.join("_"))
     }
   }
@@ -3859,6 +3876,7 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     )}_pw${formatLength(
       median(padBounds.map((bound) => bound.width)),
     )}_ph${formatLength(median(padBounds.map((bound) => bound.height)))}`
+    seeds.add(`smdpads2_${passiveDimensions}${roundedModifier}`)
     seeds.add(`res_${passiveDimensions}`)
     seeds.add(`cap_${passiveDimensions}`)
     for (const size of getFootprintSizes()) {
@@ -4314,6 +4332,7 @@ export const discoverFootprinterString = (
     right.holeIntersectionOverUnion - left.holeIntersectionOverUnion ||
     right.pinMatchRate - left.pinMatchRate ||
     right.domainScore - left.domainScore ||
+    Number(right.family === "passive") - Number(left.family === "passive") ||
     right.geometryScore - left.geometryScore ||
     left.searchRotation - right.searchRotation ||
     left.footprinterString.length - right.footprinterString.length

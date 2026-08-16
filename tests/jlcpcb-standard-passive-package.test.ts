@@ -54,7 +54,7 @@ for (const { expectedFootprinterString, name, pads, sourceHint } of cases) {
   })
 }
 
-test("requires 96% copper IoU before preferring a package hint", () => {
+test("uses a neutral passive definition when a package hint is below tolerance", () => {
   const result = circuitJsonToFootprinter(
     [
       rectPad(1, -0.805, 0.8, 0.95),
@@ -63,15 +63,11 @@ test("requires 96% copper IoU before preferring a package hint", () => {
     { maxCandidates: 10, sourceHints: ["0603"] },
   )
 
-  const canonicalCandidate = result.candidates.find(
-    ({ footprinterString }) => footprinterString === "0603_rounded0mm",
-  )
-  expect(canonicalCandidate?.copperIntersectionOverUnion).toBeGreaterThan(0.95)
-  expect(canonicalCandidate?.copperIntersectionOverUnion).toBeLessThan(0.96)
-  expect(result.best?.footprinterString).toStartWith("res_p")
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("smdpads2_")
 })
 
-test("does not prefer a hinted package below the copper IoU tolerance", () => {
+test("does not imply a resistor for a mismatched hinted package", () => {
   const result = circuitJsonToFootprinter(
     [
       rectPad(1, -0.753364, 0.8064754, 0.8640064),
@@ -83,14 +79,11 @@ test("does not prefer a hinted package below the copper IoU tolerance", () => {
     },
   )
 
-  const canonicalCandidate = result.candidates.find(
-    ({ footprinterString }) => footprinterString === "0603",
-  )
-  expect(canonicalCandidate?.copperIntersectionOverUnion).toBeLessThan(0.96)
-  expect(result.best?.footprinterString).toStartWith("res_p")
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("smdpads2_")
 })
 
-test("does not prefer a package size without an explicit hint", () => {
+test("uses the neutral passive definition without an explicit package hint", () => {
   const result = circuitJsonToFootprinter(
     [
       rectPad(1, -0.753364, 0.8064754, 0.8640064),
@@ -99,5 +92,6 @@ test("does not prefer a package size without an explicit hint", () => {
     { maxCandidates: 1 },
   )
 
-  expect(result.best?.footprinterString).toStartWith("res_p")
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("smdpads2_")
 })

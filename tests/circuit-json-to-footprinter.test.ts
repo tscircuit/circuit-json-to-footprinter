@@ -16,7 +16,12 @@ const circuitJsonFromFootprinter = (footprinterString: string) =>
 
 const circuitJsonWithSourceComponentType = (
   footprinterString: string,
-  ftype: "simple_capacitor" | "simple_diode" | "simple_resistor",
+  ftype:
+    | "simple_capacitor"
+    | "simple_diode"
+    | "simple_fuse"
+    | "simple_inductor"
+    | "simple_resistor",
 ) => {
   const pcbComponentId = "pcb_component_1"
   const sourceComponentId = "source_component_1"
@@ -310,6 +315,19 @@ test("uses the source component type to distinguish capacitor footprints", () =>
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
 })
 
+test("preserves the resistor family for an explicit resistor source", () => {
+  const result = circuitJsonToFootprinter(
+    circuitJsonWithSourceComponentType(
+      "res_p1.400048mm_pw0.7999984mm_ph0.8999982mm",
+      "simple_resistor",
+    ),
+    { maxCandidates: 3 },
+  )
+
+  expect(result.best?.family).toBe("res")
+  expect(result.best?.footprinterString).toStartWith("res_")
+})
+
 test("builds a dimensioned diode seed for JLCPCB-style pads", () => {
   const result = circuitJsonToFootprinter(
     circuitJsonWithSourceComponentType(
@@ -323,4 +341,74 @@ test("builds a dimensioned diode seed for JLCPCB-style pads", () => {
   expect(result.best?.footprinterString).toStartWith("diode_")
   expect(result.best?.footprinterString).not.toStartWith("res_")
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
+})
+
+test("uses a neutral passive footprint for an inductor", () => {
+  const result = circuitJsonToFootprinter(
+    circuitJsonWithSourceComponentType(
+      "res_p1.400048mm_pw0.7999984mm_ph0.8999982mm",
+      "simple_inductor",
+    ),
+    { maxCandidates: 3 },
+  )
+
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toStartWith("res_")
+  expect(result.best?.footprinterString).not.toStartWith("cap_")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
+})
+
+test("does not label a power inductor as a resistor from source hints", () => {
+  const result = circuitJsonToFootprinter(
+    circuitJsonFromFootprinter("res_p3.2mm_pw1.7mm_ph2mm"),
+    {
+      maxCandidates: 3,
+      sourceHints: ["FNR4018S330MT", "33uH Power Inductor", "SMD,4x4mm"],
+    },
+  )
+
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toStartWith("res_")
+})
+
+test("does not imply a resistor when a two-pad type is unknown", () => {
+  const result = circuitJsonToFootprinter(
+    circuitJsonFromFootprinter("res_p1.400048mm_pw0.7999984mm_ph0.8999982mm"),
+    { maxCandidates: 3 },
+  )
+
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toStartWith("res_")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
+})
+
+test("uses a neutral passive fallback for asymmetric two-pad packages", () => {
+  const result = circuitJsonToFootprinter(
+    [
+      {
+        ...circuitJsonFromFootprinter("res_p1mm_pw1mm_ph1mm")[0],
+        pcb_smtpad_id: "pad_1",
+        port_hints: ["pin1"],
+        x: -0.4074668,
+        width: 0.6199886,
+        height: 0.499999,
+      },
+      {
+        ...circuitJsonFromFootprinter("res_p1mm_pw1mm_ph1mm")[1],
+        pcb_smtpad_id: "pad_2",
+        port_hints: ["pin2"],
+        x: 0.4924552,
+        width: 0.4500118,
+        height: 0.3999992,
+      },
+    ] as AnyCircuitElement[],
+    { maxCandidates: 3 },
+  )
+
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toStartWith("res_")
 })

@@ -40,6 +40,8 @@ const isPcbVia = (element: AnyCircuitElement): element is PcbVia =>
 const SOURCE_COMPONENT_FAMILY_HINTS: Record<string, string> = {
   simple_capacitor: "capacitor",
   simple_diode: "diode",
+  simple_fuse: "fuse",
+  simple_inductor: "inductor",
   simple_led: "led",
   simple_resistor: "resistor",
 }
