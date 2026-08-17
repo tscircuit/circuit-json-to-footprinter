@@ -41,7 +41,9 @@ input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
 Ambiguous two-pad components use a neutral `smdpads2_...` candidate with family
 `passive` rather than implying that the component is a resistor. Explicit source
 component types and reliable domain hints still select typed passive families such as
-`res`, `cap`, or `diode`.
+`res`, `cap`, or `diode`. When a standard package size is also known, an explicit
+resistor or capacitor hint can select names such as `res0402` or `cap0402`; a bare
+size such as `0402` remains neutral when the component type is unknown.
 
 The package also exports `circuitJsonToFootprint`, `footprinterStringToFootprint`,
 `compareFootprints`, `summarizeCopperComparison`, and `getFootprintBounds` so

@@ -2474,13 +2474,46 @@ const getHintedPassiveSize = (target: Footprint, analysis: TargetAnalysis) => {
   return hintedSizes.at(-1)
 }
 
+type HintedPassiveFamily = "cap" | "res"
+
+const getHintedPassiveFamily = (
+  target: Footprint,
+): HintedPassiveFamily | undefined => {
+  const description = `${target.title} ${target.subtitle} ${
+    target.sourceHints?.join(" ") ?? ""
+  }`
+  const hasResistorHint =
+    /(?:^|[^a-z0-9])(?:res|resistors?)(?:$|[^a-z0-9])/i.test(description) ||
+    /(?:^|[^a-z0-9])res\d{4,5}(?:_|$)/i.test(description)
+  const hasCapacitorHint =
+    /(?:^|[^a-z0-9])(?:cap|capacitors?)(?:$|[^a-z0-9])/i.test(description) ||
+    /(?:^|[^a-z0-9])cap\d{4,5}(?:_|$)/i.test(description)
+
+  if (hasResistorHint === hasCapacitorHint) return undefined
+  return hasResistorHint ? "res" : "cap"
+}
+
 const getHintedPassiveSizePreference = (
   footprinterString: string,
   hintedSize: string,
+  hintedFamily: HintedPassiveFamily | undefined,
 ) => {
-  if (new RegExp(`^${hintedSize}(?:_|$)`).test(footprinterString)) return 2
+  const canonicalSizePattern = new RegExp(`^${hintedSize}(?:_|$)`)
+  if (hintedFamily) {
+    if (
+      new RegExp(`^${hintedFamily}${hintedSize}(?:_|$)`).test(footprinterString)
+    ) {
+      return 4
+    }
+    if (new RegExp(`^${hintedFamily}(?:\\d|_)`).test(footprinterString)) {
+      return 3
+    }
+    if (canonicalSizePattern.test(footprinterString)) return 2
+    return 0
+  }
+  if (canonicalSizePattern.test(footprinterString)) return 3
   if (new RegExp(`^(?:res|cap)${hintedSize}(?:_|$)`).test(footprinterString)) {
-    return 1
+    return 2
   }
   return 0
 }
@@ -4274,6 +4307,7 @@ export const discoverFootprinterString = (
   maxCandidates = 5,
 ): FootprinterDiscoveryResult => {
   const analysis = analyzeTarget(target)
+  const hintedPassiveFamily = getHintedPassiveFamily(target)
   const hintedPassiveSize = getHintedPassiveSize(target, analysis)
   const rawSeeds = generateSeeds(target, analysis)
   const seedCandidates = rawSeeds.flatMap((footprinterString) => {
@@ -4346,7 +4380,11 @@ export const discoverFootprinterString = (
         pinMismatches,
         pinsMatch,
       } = summarizeCopperComparison(candidate.footprint, target)
-      const domainScore = getDomainScore(target, candidate.family)
+      const domainScore =
+        (candidate.family === "res" || candidate.family === "cap") &&
+        hintedPassiveFamily !== candidate.family
+          ? 0
+          : getDomainScore(target, candidate.family)
       return {
         copperIntersectionOverUnion,
         domainScore,
@@ -4383,6 +4421,7 @@ export const discoverFootprinterString = (
             getHintedPassiveSizePreference(
               footprinterString,
               hintedPassiveSize,
+              hintedPassiveFamily,
             ) > 0 &&
             copperIntersectionOverUnion >= MIN_HINTED_PASSIVE_COPPER_IOU,
         )
@@ -4391,10 +4430,12 @@ export const discoverFootprinterString = (
             getHintedPassiveSizePreference(
               right.footprinterString,
               hintedPassiveSize,
+              hintedPassiveFamily,
             ) -
               getHintedPassiveSizePreference(
                 left.footprinterString,
                 hintedPassiveSize,
+                hintedPassiveFamily,
               ) || compareCandidateQuality(left, right),
         )[0]
     : undefined

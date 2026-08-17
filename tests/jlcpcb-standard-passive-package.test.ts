@@ -54,6 +54,40 @@ for (const { expectedFootprinterString, name, pads, sourceHint } of cases) {
   })
 }
 
+for (const { expectedFamily, sourceHint } of [
+  { expectedFamily: "res", sourceHint: "0402 resistor" },
+  { expectedFamily: "cap", sourceHint: "0402 capacitor" },
+]) {
+  test(`uses the ${expectedFamily} package family for an explicit type hint`, () => {
+    const result = circuitJsonToFootprinter(
+      [
+        rectPad(1, -0.505, 0.54, 0.64),
+        rectPad(2, 0.505, 0.54, 0.64),
+      ] as AnyCircuitElement[],
+      { maxCandidates: 3, sourceHints: [sourceHint] },
+    )
+
+    expect(result.best?.family).toBe(expectedFamily)
+    expect(result.best?.footprinterString).toStartWith(`${expectedFamily}0402`)
+    expect(result.best?.copperIntersectionOverUnion).toBeGreaterThanOrEqual(
+      0.96,
+    )
+  })
+}
+
+test("keeps conflicting passive type hints neutral", () => {
+  const result = circuitJsonToFootprinter(
+    [
+      rectPad(1, -0.505, 0.54, 0.64),
+      rectPad(2, 0.505, 0.54, 0.64),
+    ] as AnyCircuitElement[],
+    { maxCandidates: 3, sourceHints: ["0402 resistor capacitor"] },
+  )
+
+  expect(result.best?.family).toBe("passive")
+  expect(result.best?.footprinterString).toStartWith("0402")
+})
+
 test("uses a neutral passive definition when a package hint is below tolerance", () => {
   const result = circuitJsonToFootprinter(
     [
