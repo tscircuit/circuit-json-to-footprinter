@@ -370,6 +370,7 @@ test("does not label a power inductor as a resistor from source hints", () => {
 
   expect(result.best?.family).toBe("passive")
   expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toContain("_rounded0mm")
   expect(result.best?.footprinterString).not.toStartWith("res_")
 })
 
@@ -381,6 +382,7 @@ test("does not imply a resistor when a two-pad type is unknown", () => {
 
   expect(result.best?.family).toBe("passive")
   expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toContain("_rounded0mm")
   expect(result.best?.footprinterString).not.toStartWith("res_")
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
 })
@@ -410,5 +412,6 @@ test("uses a neutral passive fallback for asymmetric two-pad packages", () => {
 
   expect(result.best?.family).toBe("passive")
   expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toContain("_rounded0mm")
   expect(result.best?.footprinterString).not.toStartWith("res_")
 })

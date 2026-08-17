@@ -99,6 +99,7 @@ test("uses a neutral passive definition when a package hint is below tolerance",
 
   expect(result.best?.family).toBe("passive")
   expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toContain("_rounded0mm")
 })
 
 test("does not imply a resistor for a mismatched hinted package", () => {
@@ -115,6 +116,7 @@ test("does not imply a resistor for a mismatched hinted package", () => {
 
   expect(result.best?.family).toBe("passive")
   expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toContain("_rounded0mm")
 })
 
 test("uses the neutral passive definition without an explicit package hint", () => {
@@ -128,4 +130,5 @@ test("uses the neutral passive definition without an explicit package hint", () 
 
   expect(result.best?.family).toBe("passive")
   expect(result.best?.footprinterString).toStartWith("smdpads2_")
+  expect(result.best?.footprinterString).not.toContain("_rounded0mm")
 })

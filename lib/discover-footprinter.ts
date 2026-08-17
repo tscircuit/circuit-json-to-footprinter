@@ -3415,7 +3415,10 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
             : [],
         )
         if (cornerRadii.length === 2) {
-          parameters.push(`rounded${formatPreciseLength(median(cornerRadii))}`)
+          const cornerRadius = median(cornerRadii)
+          if (cornerRadius > 0) {
+            parameters.push(`rounded${formatPreciseLength(cornerRadius)}`)
+          }
         }
       }
       seeds.add(parameters.join("_"))
@@ -3904,12 +3907,16 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       rectCornerRadii.length === padCount
         ? `_rounded${formatLength(median(rectCornerRadii))}`
         : ""
+    const passiveRoundedModifier =
+      rectCornerRadii.length === padCount && median(rectCornerRadii) > 0
+        ? roundedModifier
+        : ""
     const passiveDimensions = `p${formatLength(
       analysis.heuristics.p,
     )}_pw${formatLength(
       median(padBounds.map((bound) => bound.width)),
     )}_ph${formatLength(median(padBounds.map((bound) => bound.height)))}`
-    seeds.add(`smdpads2_${passiveDimensions}${roundedModifier}`)
+    seeds.add(`smdpads2_${passiveDimensions}${passiveRoundedModifier}`)
     seeds.add(`res_${passiveDimensions}`)
     seeds.add(`cap_${passiveDimensions}`)
     for (const size of getFootprintSizes()) {
