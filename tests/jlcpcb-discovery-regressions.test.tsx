@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test"
 import { Fragment } from "react"
-import { expectFootprintRecovery } from "./fixture/jlcpcb-reproduction-utils.js"
+import { DBT50G_7_62_2P_BK_P } from "./fixture/DBT50G_7_62_2P_BK_P.js"
+import {
+  expectFootprintRecovery,
+  expectJlcpcbFootprintComparison,
+} from "./fixture/jlcpcb-reproduction-utils.js"
 
 const Txs0102Dqer = () => (
   <chip
@@ -201,5 +205,33 @@ test("recovers C58159 as a measured potentiometer", async () => {
 
   expect(result.best!.footprinterString).toBe(
     "potentiometer_p2.54mm_h2.54mm_od1.524mm_id0.762mm_pin1location(leftside,bottom)",
+  )
+})
+
+test("does not classify C496127 barrier terminal as radial", async () => {
+  const { result, sourceCircuitJson } = await expectJlcpcbFootprintComparison({
+    expectedFootprinterString:
+      "pinrow2_nosquareplating_p7.62mm_od2.6mm_id1.6mm",
+    jlcpcbPartNumber: "C496127",
+    minimumCopperIntersectionOverUnion: 0.9999,
+    renderJlcpcbComponent: (props) => <DBT50G_7_62_2P_BK_P {...props} />,
+    snapshotFilePath: import.meta.path,
+    sourceHints: [
+      "C496127 DBT50G-7.62-2P CONN-TH_2P-P7.62_L15.2-W16.7-EX4.2 Barrier Terminal Blocks",
+    ],
+  })
+
+  expect(
+    sourceCircuitJson.filter(
+      ({ type }) =>
+        type === "pcb_silkscreen_path" || type === "pcb_silkscreen_rect",
+    ),
+  ).toHaveLength(12)
+  expect(result.best!.family).toBe("pinrow")
+  expect(
+    Number((result.best!.copperIntersectionOverUnion * 100).toFixed(2)),
+  ).toBe(100)
+  expect(result.candidates.every(({ family }) => family !== "radial")).toBe(
+    true,
   )
 })
