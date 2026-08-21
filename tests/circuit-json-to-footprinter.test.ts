@@ -329,17 +329,39 @@ test("preserves the resistor family for an explicit resistor source", () => {
 })
 
 test("builds a dimensioned diode seed for JLCPCB-style pads", () => {
-  const result = circuitJsonToFootprinter(
-    circuitJsonWithSourceComponentType(
-      "res_p2.344928mm_pw0.999998mm_ph0.6999986mm",
-      "simple_diode",
-    ),
-    { maxCandidates: 3 },
+  const pcbComponentId = "pcb_component_1"
+  const circuitJson = circuitJsonWithSourceComponentType(
+    "res_p2.344928mm_pw0.999998mm_ph0.6999986mm",
+    "simple_diode",
+  ).map((element) =>
+    element.type === "pcb_smtpad" && element.port_hints?.includes("1")
+      ? {
+          ...element,
+          port_hints: [...element.port_hints, "anode", "pos"],
+        }
+      : element,
   )
+  circuitJson.push({
+    type: "pcb_courtyard_outline",
+    pcb_courtyard_outline_id: "pcb_courtyard_outline_diode_1",
+    pcb_component_id: pcbComponentId,
+    layer: "top",
+    outline: [
+      { x: -2, y: 1.25 },
+      { x: 2, y: 1.25 },
+      { x: 2, y: -1.25 },
+      { x: -2, y: -1.25 },
+      { x: -2, y: 1.25 },
+    ],
+  })
+
+  const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 3 })
 
   expect(result.best?.family).toBe("diode")
   expect(result.best?.footprinterString).toStartWith("diode_")
   expect(result.best?.footprinterString).not.toStartWith("res_")
+  expect(result.best?.footprinterString).toContain("_w3.5mm_h2mm")
+  expect(result.best?.footprinterString).toEndWith("_anodepin1")
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
 })
 

@@ -44,6 +44,7 @@ type Pin1Location =
   | readonly ["leftside" | "rightside", "bottom" | "top"]
 
 const FOOTPRINT_ROTATIONS: FootprintRotation[] = [0, 90, 180, 270]
+const PARAMETRIC_TWO_PAD_FAMILIES = ["smdpads2", "cap", "diode", "res"] as const
 const PIN1_LOCATIONS: Pin1Location[] = [
   ["leftside", "top"],
   ["leftside", "bottom"],
@@ -2676,7 +2677,10 @@ const addPassiveBodyDimensionsForRotation = (
   passiveBody: TargetAnalysis["passiveBody"],
   searchRotation: FootprintRotation,
 ) => {
-  if (!passiveBody || !/^(?:smdpads2|res|cap)_p/i.test(footprinterString)) {
+  const supportsBodyDimensions = PARAMETRIC_TWO_PAD_FAMILIES.some((family) =>
+    footprinterString.startsWith(`${family}_p`),
+  )
+  if (!passiveBody || !supportsBodyDimensions) {
     return footprinterString
   }
 
@@ -3455,7 +3459,7 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     // diode, LED, inductor, or fuse. Keep a neutral candidate alongside the
     // type-specific passive definitions so ambiguous inputs never acquire a
     // misleading component type from a geometry tie.
-    for (const family of ["smdpads2", "cap", "diode", "res"]) {
+    for (const family of PARAMETRIC_TWO_PAD_FAMILIES) {
       const parameters = [
         family,
         `p${formatPreciseLength(pitch)}`,
