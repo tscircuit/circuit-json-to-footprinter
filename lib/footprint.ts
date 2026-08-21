@@ -1,6 +1,8 @@
 import { type FootprinterParamsBuilder, fp } from "@tscircuit/footprinter"
 import type {
   AnyCircuitElement,
+  PcbCourtyardOutline,
+  PcbCourtyardRect,
   PcbHole,
   PcbPlatedHole,
   PcbSmtPad,
@@ -9,6 +11,11 @@ import type {
 import { validatePcbPad } from "./footprint-geometry.js"
 
 export interface Footprint {
+  courtyard?: {
+    center: { x: number; y: number }
+    height: number
+    width: number
+  }
   holes: PcbHole[]
   pads: Array<PcbSmtPad | PcbPlatedHole>
   rotation?: number
@@ -36,6 +43,79 @@ const isPcbHole = (element: AnyCircuitElement): element is PcbHole =>
 
 const isPcbVia = (element: AnyCircuitElement): element is PcbVia =>
   element.type === "pcb_via"
+
+const getAxisAlignedCourtyard = (
+  circuitJson: readonly AnyCircuitElement[],
+  pads: Array<PcbSmtPad | PcbPlatedHole>,
+): Footprint["courtyard"] => {
+  const pcbComponentIds = new Set(
+    pads.flatMap((pad) => (pad.pcb_component_id ? [pad.pcb_component_id] : [])),
+  )
+  const belongsToFootprint = (
+    courtyard: PcbCourtyardOutline | PcbCourtyardRect,
+  ) =>
+    pcbComponentIds.size === 0 ||
+    pcbComponentIds.has(courtyard.pcb_component_id)
+
+  const candidates = circuitJson.flatMap((element) => {
+    if (element.type === "pcb_courtyard_rect" && belongsToFootprint(element)) {
+      const normalizedRotation =
+        (((element.ccw_rotation ?? 0) % 180) + 180) % 180
+      if (Math.abs(normalizedRotation) < 0.00001) {
+        return [
+          {
+            center: element.center,
+            width: element.width,
+            height: element.height,
+          },
+        ]
+      }
+      if (Math.abs(normalizedRotation - 90) < 0.00001) {
+        return [
+          {
+            center: element.center,
+            width: element.height,
+            height: element.width,
+          },
+        ]
+      }
+      return []
+    }
+
+    if (
+      element.type !== "pcb_courtyard_outline" ||
+      !belongsToFootprint(element) ||
+      element.outline.length < 4
+    ) {
+      return []
+    }
+
+    const xs = element.outline.map(({ x }) => x)
+    const ys = element.outline.map(({ y }) => y)
+    const minX = Math.min(...xs)
+    const maxX = Math.max(...xs)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+    const isCorner = ({ x, y }: { x: number; y: number }) =>
+      (Math.abs(x - minX) < 0.00001 || Math.abs(x - maxX) < 0.00001) &&
+      (Math.abs(y - minY) < 0.00001 || Math.abs(y - maxY) < 0.00001)
+    if (maxX <= minX || maxY <= minY || !element.outline.every(isCorner)) {
+      return []
+    }
+
+    return [
+      {
+        center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+        width: maxX - minX,
+        height: maxY - minY,
+      },
+    ]
+  })
+
+  return candidates.toSorted(
+    (left, right) => right.width * right.height - left.width * left.height,
+  )[0]
+}
 
 const SOURCE_COMPONENT_FAMILY_HINTS: Record<string, string> = {
   simple_capacitor: "capacitor",
@@ -103,6 +183,7 @@ export const circuitJsonToFootprint = (
   )
 
   return {
+    courtyard: getAxisAlignedCourtyard(circuitJson, pads),
     holes,
     pads,
     rotation: 0,
