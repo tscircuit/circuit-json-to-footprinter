@@ -20,7 +20,6 @@ const MAX_OPTIMIZED_SEEDS = 10
 const OPTIMIZATION_STEPS = 16
 const PIN_MISMATCH_RANKING_WEIGHT = 0.01
 const MIN_HINTED_PASSIVE_COPPER_IOU = 0.96
-const FOOTPRINTER_COURTYARD_CLEARANCE_MM = 0.25
 const NUMERIC_PARAMETERS = [
   "p",
   "px",
@@ -96,7 +95,7 @@ interface TargetAnalysis {
   lgaPadLength: number
   lgaPadWidth: number
   perimeterPadCount: number
-  passiveBody?: {
+  centeredCourtyard?: {
     height: number
     width: number
   }
@@ -2193,16 +2192,13 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
     target.courtyard &&
     Math.abs(target.courtyard.center.x - centerX) < 0.01 &&
     Math.abs(target.courtyard.center.y - centerY) < 0.01
-  // Custom passive w/h parameters are body dimensions. Footprinter expands
-  // them by 0.25 mm per side, so invert that transform when the imported
-  // courtyard can be represented by a centered rectangular body.
-  const passiveBody =
+  // Custom two-pad families can encode a centered rectangular courtyard
+  // directly through cyw/cyh.
+  const centeredCourtyard =
     target.courtyard && courtyardIsCenteredOnCopper
       ? {
-          width:
-            target.courtyard.width - 2 * FOOTPRINTER_COURTYARD_CLEARANCE_MM,
-          height:
-            target.courtyard.height - 2 * FOOTPRINTER_COURTYARD_CLEARANCE_MM,
+          width: target.courtyard.width,
+          height: target.courtyard.height,
         }
       : undefined
 
@@ -2239,9 +2235,11 @@ const analyzeTarget = (target: Footprint): TargetAnalysis => {
       ? median(leftRightEdgePads.map(({ bounds: bound }) => bound.height))
       : median(topBottomEdgePads.map(({ bounds: bound }) => bound.width)),
     perimeterPadCount: sidePads.length,
-    passiveBody:
-      passiveBody && passiveBody.width > 0 && passiveBody.height > 0
-        ? passiveBody
+    centeredCourtyard:
+      centeredCourtyard &&
+      centeredCourtyard.width > 0 &&
+      centeredCourtyard.height > 0
+        ? centeredCourtyard
         : undefined,
     platedHoleCount,
     potentiometer: analyzePotentiometer(target),
@@ -2672,22 +2670,22 @@ const addThermalPadOffsetForRotation = (
     : footprinterString
 }
 
-const addPassiveBodyDimensionsForRotation = (
+const addCourtyardDimensionsForRotation = (
   footprinterString: string,
-  passiveBody: TargetAnalysis["passiveBody"],
+  courtyard: TargetAnalysis["centeredCourtyard"],
   searchRotation: FootprintRotation,
 ) => {
-  const supportsBodyDimensions = PARAMETRIC_TWO_PAD_FAMILIES.some((family) =>
-    footprinterString.startsWith(`${family}_p`),
+  const supportsCourtyardDimensions = PARAMETRIC_TWO_PAD_FAMILIES.some(
+    (family) => footprinterString.startsWith(`${family}_p`),
   )
-  if (!passiveBody || !supportsBodyDimensions) {
+  if (!courtyard || !supportsCourtyardDimensions) {
     return footprinterString
   }
 
   const isQuarterTurn = searchRotation === 90 || searchRotation === 270
-  const width = isQuarterTurn ? passiveBody.height : passiveBody.width
-  const height = isQuarterTurn ? passiveBody.width : passiveBody.height
-  return `${footprinterString}_w${formatPreciseLength(width)}_h${formatPreciseLength(height)}`
+  const width = isQuarterTurn ? courtyard.height : courtyard.width
+  const height = isQuarterTurn ? courtyard.width : courtyard.height
+  return `${footprinterString}_cyw${formatPreciseLength(width)}_cyh${formatPreciseLength(height)}`
 }
 
 const geometrySignature = (footprint: Footprint) => {
@@ -4145,14 +4143,8 @@ const findActiveParameters = (
   const baseSignature = geometrySignature(seed.footprint)
   const heuristics = getOrientedHeuristics(seed, analysis)
   const hasExplicitQuadSidePins = seed.footprinterString.includes("_leftpins")
-  const hasCustomPassiveBody = /^(?:smdpads2|res|cap)_p.*_w.*_h/i.test(
-    seed.footprinterString,
-  )
 
   for (const parameter of NUMERIC_PARAMETERS) {
-    if (hasCustomPassiveBody && (parameter === "w" || parameter === "h")) {
-      continue
-    }
     if (
       (parameter === "px" || parameter === "py") &&
       !hasExplicitQuadSidePins
@@ -4394,13 +4386,13 @@ export const discoverFootprinterString = (
     }
 
     return FOOTPRINT_ROTATIONS.flatMap((searchRotation): SeedCandidate[] => {
-      const bodySizedFootprinterString = addPassiveBodyDimensionsForRotation(
+      const courtyardSizedFootprinterString = addCourtyardDimensionsForRotation(
         footprinterString,
-        analysis.passiveBody,
+        analysis.centeredCourtyard,
         searchRotation,
       )
       const offsetFootprinterString = addThermalPadOffsetForRotation(
-        bodySizedFootprinterString,
+        courtyardSizedFootprinterString,
         analysis.thermalPad,
         searchRotation,
       )

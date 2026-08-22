@@ -360,7 +360,7 @@ test("builds a dimensioned diode seed for JLCPCB-style pads", () => {
   expect(result.best?.family).toBe("diode")
   expect(result.best?.footprinterString).toStartWith("diode_")
   expect(result.best?.footprinterString).not.toStartWith("res_")
-  expect(result.best?.footprinterString).toContain("_w3.5mm_h2mm")
+  expect(result.best?.footprinterString).toContain("_cyw4mm_cyh2.5mm")
   expect(result.best?.footprinterString).toEndWith("_anodepin1")
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
 })

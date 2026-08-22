@@ -133,7 +133,7 @@ test("uses the neutral passive definition without an explicit package hint", () 
   expect(result.best?.footprinterString).not.toContain("_rounded0mm")
 })
 
-test("preserves the C48467 body dimensions from its imported courtyard", () => {
+test("preserves the C48467 imported courtyard dimensions", () => {
   const pcbComponentId = "pcb_component_1"
   const result = circuitJsonToFootprinter(
     [
@@ -170,5 +170,5 @@ test("preserves the C48467 body dimensions from its imported courtyard", () => {
     width: 8.628,
     height: 4.056,
   })
-  expect(result.best?.footprinterString).toContain("_w8.128mm_h3.556mm")
+  expect(result.best?.footprinterString).toContain("_cyw8.628mm_cyh4.056mm")
 })
