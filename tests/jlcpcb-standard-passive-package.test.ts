@@ -132,3 +132,43 @@ test("uses the neutral passive definition without an explicit package hint", () 
   expect(result.best?.footprinterString).toStartWith("smdpads2_")
   expect(result.best?.footprinterString).not.toContain("_rounded0mm")
 })
+
+test("preserves the C48467 imported courtyard dimensions", () => {
+  const pcbComponentId = "pcb_component_1"
+  const result = circuitJsonToFootprinter(
+    [
+      {
+        ...rectPad(2, 2.329942, 2.9100018, 2.9106114),
+        pcb_component_id: pcbComponentId,
+      },
+      {
+        ...rectPad(1, -2.329942, 2.9100018, 2.9106114),
+        pcb_component_id: pcbComponentId,
+      },
+      {
+        type: "pcb_courtyard_outline",
+        pcb_courtyard_outline_id: "pcb_courtyard_outline_C48467_1",
+        pcb_component_id: pcbComponentId,
+        layer: "top",
+        outline: [
+          { x: -4.314, y: 2.028 },
+          { x: 4.314, y: 2.028 },
+          { x: 4.314, y: -2.028 },
+          { x: -4.314, y: -2.028 },
+          { x: -4.314, y: 2.028 },
+        ],
+      },
+    ] as AnyCircuitElement[],
+    {
+      maxCandidates: 5,
+      sourceHints: ["C48467 0451005.MRL fuse"],
+    },
+  )
+
+  expect(result.target.courtyard).toEqual({
+    center: { x: 0, y: 0 },
+    width: 8.628,
+    height: 4.056,
+  })
+  expect(result.best?.footprinterString).toContain("_cyw8.628mm_cyh4.056mm")
+})
