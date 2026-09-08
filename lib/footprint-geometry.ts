@@ -246,14 +246,19 @@ const getPlatedHoleDrillGeometry = (pad: PcbPlatedHole): ShapeGeometry => {
       }
     case "hole_with_polygon_pad": {
       const diameter = pad.hole_diameter ?? 0
+      const offset = rotatePoint(
+        pad.hole_offset_x,
+        pad.hole_offset_y,
+        toRadians(pad.ccw_rotation ?? 0),
+      )
       return {
         height: pad.hole_height ?? diameter,
         rotation:
           pad.hole_shape === "rotated_pill" ? (pad.ccw_rotation ?? 0) : 0,
         shape: HOLE_SHAPE_KIND[pad.hole_shape],
         width: pad.hole_width ?? diameter,
-        x: pad.x + pad.hole_offset_x,
-        y: pad.y + pad.hole_offset_y,
+        x: pad.x + offset.x,
+        y: pad.y + offset.y,
       }
     }
   }
@@ -324,10 +329,14 @@ const getPlatedHoleCopperShape = (pad: PcbPlatedHole): ShapeGeometry => {
       }
     case "hole_with_polygon_pad":
       return getPolygonGeometry(
-        pad.pad_outline.map((point) => ({
-          x: point.x + pad.x,
-          y: point.y + pad.y,
-        })),
+        pad.pad_outline.map((point) => {
+          const rotated = rotatePoint(
+            point.x,
+            point.y,
+            toRadians(pad.ccw_rotation ?? 0),
+          )
+          return { x: rotated.x + pad.x, y: rotated.y + pad.y }
+        }),
         "Polygon plated-hole pads",
       )
   }
