@@ -2460,6 +2460,25 @@ const getGeometryLoss = (candidate: Footprint, target: Footprint) => {
 const getGeometryScore = (candidate: Footprint, target: Footprint) =>
   1 / (1 + getGeometryLoss(candidate, target))
 
+// Package metadata can distinguish packages whose copper layouts are identical.
+// Match complete family tokens, so SSOP does not also match TSSOP/HTSSOP.
+const hasTssopPackageHint = (target: Footprint, pinCount: number) => {
+  const description = `${target.title} ${target.subtitle} ${target.sourceHints?.join(" ") ?? ""}`
+  const matches = [
+    ...description.matchAll(
+      /(?:^|[^a-z0-9])(htssop|tssop|ssop|vssop|msop|qsop|soic|sop|sot|dfn|qfn|lqfn|lga|qfp|lqfp|tqfp|bga)(?=\d|[^a-z0-9]|$)(?:[-_ ]?(\d+))?/gi,
+    ),
+  ]
+  return (
+    matches.length > 0 &&
+    matches.every(
+      (match) =>
+        /^(?:h)?tssop$/i.test(match[1]!) &&
+        (!match[2] || Number(match[2]) === pinCount),
+    )
+  )
+}
+
 const getDomainScore = (target: Footprint, family: string) => {
   const description = `${target.title} ${target.subtitle} ${
     target.sourceHints?.join(" ") ?? ""
@@ -3246,14 +3265,32 @@ const getStaggeredSmdPinHeaderSeed = (target: Footprint) => {
   return undefined
 }
 
-const getTwoSidedDfnSeed = (target: Footprint) => {
-  const pads = getPadGeometries(target)
+const getTwoSidedSeed = (
+  target: Footprint,
+  family: "dfn" | "tssop",
+  thermalPad?: TargetAnalysis["thermalPad"],
+) => {
+  const allPads = getPadGeometries(target)
+  const thermalEntry = thermalPad
+    ? allPads.find(({ copper }) => {
+        const bounds = getPadBounds(copper)
+        return (
+          Math.abs(bounds.width - thermalPad.width) < 1e-6 &&
+          Math.abs(bounds.height - thermalPad.height) < 1e-6
+        )
+      })
+    : undefined
+  if (thermalPad && !thermalEntry) return undefined
+  const pads = allPads.filter((pad) => pad !== thermalEntry)
   if (
     pads.length < 4 ||
     pads.length % 2 !== 0 ||
     pads.some(
       ({ copper, drill, element }) =>
-        element.type !== "pcb_smtpad" || drill || copper.shape !== "rect",
+        element.type !== "pcb_smtpad" ||
+        drill ||
+        (copper.shape !== "rect" &&
+          !(family === "tssop" && copper.shape === "pill")),
     )
   ) {
     return undefined
@@ -3338,9 +3375,31 @@ const getTwoSidedDfnSeed = (target: Footprint) => {
       continue
     }
 
+    const rowDistance = Math.abs(crossCoordinates[1]! - crossCoordinates[0]!)
+    // DFN w is the outer copper span. TSSOP w is the inner gap, with a
+    // 0.15mm fine-pitch adjustment in Footprinter's existing TSSOP definition.
     const width =
-      Math.abs(crossCoordinates[1]! - crossCoordinates[0]!) + padLength
-    return `dfn${pads.length}_p${formatPreciseLength(pitch)}_w${formatPreciseLength(width)}_pw${formatPreciseLength(padWidth)}_pl${formatPreciseLength(padLength)}`
+      family === "dfn"
+        ? rowDistance + padLength
+        : rowDistance - padLength + (pitch <= 0.5 ? 0.15 : 0)
+    if (width <= 0) continue
+    let seed = `${family}${pads.length}_p${formatPreciseLength(pitch)}_w${formatPreciseLength(width)}_pw${formatPreciseLength(padWidth)}_pl${formatPreciseLength(padLength)}`
+    if (family === "tssop") {
+      const radius = median(
+        pads.map(({ copper }) =>
+          copper.shape === "pill"
+            ? Math.min(copper.width, copper.height) / 2
+            : (copper.cornerRadius ?? 0),
+        ),
+      )
+      seed += `_rounded${formatPreciseLength(radius)}`
+    }
+    if (thermalPad) {
+      const width = crossAxis === "x" ? thermalPad.width : thermalPad.height
+      const height = crossAxis === "x" ? thermalPad.height : thermalPad.width
+      seed += `_thermalpad${formatPreciseLength(width)}x${formatPreciseLength(height)}`
+    }
+    return seed
   }
 
   return undefined
@@ -3424,8 +3483,13 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   const staggeredSmdPinHeaderSeed = getStaggeredSmdPinHeaderSeed(target)
   if (staggeredSmdPinHeaderSeed) seeds.add(staggeredSmdPinHeaderSeed)
 
-  const twoSidedDfnSeed = getTwoSidedDfnSeed(target)
+  const twoSidedDfnSeed = getTwoSidedSeed(target, "dfn")
   if (twoSidedDfnSeed) seeds.add(twoSidedDfnSeed)
+
+  if (hasTssopPackageHint(target, analysis.perimeterPadCount)) {
+    const tssopSeed = getTwoSidedSeed(target, "tssop", analysis.thermalPad)
+    if (tssopSeed) seeds.add(tssopSeed)
+  }
 
   const twoLeadThermalQfnSeed = getTwoLeadThermalQfnSeed(target, analysis)
   if (twoLeadThermalQfnSeed) seeds.add(twoLeadThermalQfnSeed)
