@@ -2465,6 +2465,41 @@ const hasMiniMelfPackageHint = (target: Footprint) =>
     `${target.title} ${target.subtitle} ${target.sourceHints?.join(" ") ?? ""}`,
   )
 
+const hasTinySon2PackageHint = (target: Footprint) =>
+  /(?:^|[^a-z0-9])x[12][\s_-]*son[\s_-]*2(?=$|[^a-z0-9])/i.test(
+    `${target.title} ${target.subtitle} ${target.sourceHints?.join(" ") ?? ""}`,
+  )
+
+const getTinySon2DfnSeed = (target: Footprint, analysis: TargetAnalysis) => {
+  if (!analysis.twoPadSmd || !hasTinySon2PackageHint(target)) return undefined
+
+  const { padHeight, pin1Offset, pin1Width, pin2Offset, pin2Width } =
+    analysis.twoPadSmd
+  const pitch = Math.abs(pin2Offset - pin1Offset)
+  const padLength = median([pin1Width, pin2Width])
+
+  // TI DPY0002A mechanical dimensions. The land pattern still comes from the
+  // source copper, while these explicit package dimensions let the downstream
+  // renderer select the reusable rectangular DFN implementation.
+  return [
+    "dfn2",
+    `w${formatPreciseLength(pitch + padLength)}`,
+    `pl${formatPreciseLength(padLength)}`,
+    `pw${formatPreciseLength(padHeight)}`,
+    "rounded0",
+    "bodywidth1mm",
+    "bodylength0.6mm",
+    "bodythickness0.35mm",
+    "standoff0.025mm",
+    "terminalinset0.05mm",
+    "terminallength0.25mm",
+    "terminalwidth0.5mm",
+    "terminalpitch0.5mm",
+    "terminalthickness0.05mm",
+    "pin1markwidth0.07mm",
+  ].join("_")
+}
+
 // Package metadata can distinguish packages whose copper layouts are identical.
 // Match complete family tokens, so SSOP does not also match TSSOP/HTSSOP.
 const hasTssopPackageHint = (target: Footprint, pinCount: number) => {
@@ -2500,7 +2535,7 @@ const getDomainScore = (target: Footprint, family: string) => {
   const aliases: Record<string, string[]> = {
     cap: ["capacitor", "cap"],
     d2pak: ["d2pak", "to-263", "to263"],
-    dfn: ["dfn"],
+    dfn: ["dfn", "x1-son-2", "x1son2", "x2-son-2", "x2son2"],
     dpak: ["dpak", "to-252", "to252"],
     fpc: ["fpc", "ffc", "flat flexible"],
     jst: ["jst", "smd p=", "smd,p=", "wire-to-board", "wire to board"],
@@ -2903,6 +2938,9 @@ const getPreferredFamilies = (target: Footprint, analysis: TargetAnalysis) => {
   if (isLed2835Target(target, analysis)) return new Set(["led2835"])
   if (analysis.twoPadSmd && hasMiniMelfPackageHint(target)) {
     return new Set(["minimelf", "sod80"])
+  }
+  if (analysis.twoPadSmd && hasTinySon2PackageHint(target)) {
+    return new Set(["dfn"])
   }
   if (analysis.potentiometer) return new Set(["potentiometer"])
   if (analysis.fpc) return new Set(["fpc"])
@@ -3486,12 +3524,16 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   const padCount = target.pads.length
   const seeds = new Set<string>()
   const quadSidePinSuffix = getQuadSidePinSuffix(analysis)
+  const tinySon2DfnSeed = getTinySon2DfnSeed(target, analysis)
 
   for (const family of getFootprintNames()) {
+    if (family === "dfn" && tinySon2DfnSeed) continue
     seeds.add(`${family}${padCount}`)
     // Mid-mount USB-C variants are named by their explicit 16-pin form.
     if (family !== "usbcmidmount") seeds.add(family)
   }
+
+  if (tinySon2DfnSeed) seeds.add(tinySon2DfnSeed)
 
   const bgaGridSeed = getBgaGridSeed(target)
   if (bgaGridSeed) seeds.add(bgaGridSeed)
@@ -4187,13 +4229,19 @@ const selectSeedsToOptimize = (
               entry.footprinterString.includes("_thermalpad"),
           )
         : undefined) ??
-      (family === "dfn"
+      (family === "dfn" && hasTinySon2PackageHint(target)
         ? candidates.find(
             (entry) =>
               entry.family === family &&
-              entry.footprinterString.includes("_missing("),
+              entry.footprinterString.includes("_bodywidth1mm"),
           )
-        : undefined) ??
+        : family === "dfn"
+          ? candidates.find(
+              (entry) =>
+                entry.family === family &&
+                entry.footprinterString.includes("_missing("),
+            )
+          : undefined) ??
       (family === "lga"
         ? candidates.find(
             (entry) =>
@@ -4605,7 +4653,21 @@ export const discoverFootprinterString = (
               ) || compareCandidateQuality(left, right),
         )[0]
     : undefined
+  const preferredJstThroughHoleCandidate = analysis.jstThroughHole
+    ? allCandidates
+        .filter(
+          ({ copperIntersectionOverUnion, family, footprinterString }) =>
+            family === "jst" &&
+            footprinterString.includes("_zh") &&
+            copperIntersectionOverUnion >= 0.99,
+        )
+        .toSorted(compareCandidateQuality)[0]
+    : undefined
   allCandidates.sort((left, right) => {
+    const jstThroughHolePreference =
+      Number(right === preferredJstThroughHoleCandidate) -
+      Number(left === preferredJstThroughHoleCandidate)
+    if (jstThroughHolePreference) return jstThroughHolePreference
     // JLCPCB's explicit package size is more useful than reproducing small
     // manufacturer-specific land-pattern differences with a generic,
     // parameterized passive. Promote only the best-oriented canonical

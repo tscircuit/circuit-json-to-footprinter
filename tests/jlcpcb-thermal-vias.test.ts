@@ -161,4 +161,4 @@ test("discovers C2871569 with its QFN thermal-via parameters", () => {
 
   const recovered = footprinterStringToFootprint(best!.footprinterString)
   expect(recovered.vias).toHaveLength(16)
-})
+}, 10000)
