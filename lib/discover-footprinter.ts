@@ -2460,6 +2460,11 @@ const getGeometryLoss = (candidate: Footprint, target: Footprint) => {
 const getGeometryScore = (candidate: Footprint, target: Footprint) =>
   1 / (1 + getGeometryLoss(candidate, target))
 
+const hasMiniMelfPackageHint = (target: Footprint) =>
+  /(?:^|[^a-z0-9])(?:mini[\s-]*melf|sod[\s-]*80)(?=$|[^a-z0-9])/i.test(
+    `${target.title} ${target.subtitle} ${target.sourceHints?.join(" ") ?? ""}`,
+  )
+
 // Package metadata can distinguish packages whose copper layouts are identical.
 // Match complete family tokens, so SSOP does not also match TSSOP/HTSSOP.
 const hasTssopPackageHint = (target: Footprint, pinCount: number) => {
@@ -2480,6 +2485,14 @@ const hasTssopPackageHint = (target: Footprint, pinCount: number) => {
 }
 
 const getDomainScore = (target: Footprint, family: string) => {
+  // Prefer the explicit package over a generic diode only when copper and pin
+  // scores tie. Both names are supported aliases for the MiniMELF outline.
+  if (
+    (family === "minimelf" || family === "sod80") &&
+    hasMiniMelfPackageHint(target)
+  ) {
+    return 2
+  }
   const description = `${target.title} ${target.subtitle} ${
     target.sourceHints?.join(" ") ?? ""
   }`.toLowerCase()
@@ -2888,6 +2901,9 @@ const getPreferredFamilies = (target: Footprint, analysis: TargetAnalysis) => {
   if (analysis.jstSmd) return new Set(["jst"])
   if (analysis.jstThroughHole) return new Set(["jst"])
   if (isLed2835Target(target, analysis)) return new Set(["led2835"])
+  if (analysis.twoPadSmd && hasMiniMelfPackageHint(target)) {
+    return new Set(["minimelf", "sod80"])
+  }
   if (analysis.potentiometer) return new Set(["potentiometer"])
   if (analysis.fpc) return new Set(["fpc"])
   if (analysis.rj45) return new Set(["rj45"])
@@ -3517,6 +3533,21 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       analysis.twoPadSmd
     const pitch = Math.abs(pin2Offset - pin1Offset)
     const padWidth = median([pin1Width, pin2Width])
+    if (hasMiniMelfPackageHint(target)) {
+      // These horizontal two-pad definitions use pl along the pitch axis and
+      // pw across it. SOD-80 supports rectangular lands; MiniMELF supplies its
+      // own rounded lands. Copper comparison chooses the matching definition.
+      for (const family of ["minimelf", "sod80"]) {
+        seeds.add(
+          [
+            family,
+            `p${formatPreciseLength(pitch)}`,
+            `pl${formatPreciseLength(padWidth)}`,
+            `pw${formatPreciseLength(padHeight)}`,
+          ].join("_"),
+        )
+      }
+    }
     // Two-pad copper geometry alone cannot distinguish a resistor, capacitor,
     // diode, LED, inductor, or fuse. Keep a neutral candidate alongside the
     // type-specific passive definitions so ambiguous inputs never acquire a
