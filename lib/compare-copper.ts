@@ -192,10 +192,16 @@ const comparePinHints = (
   left: Footprint,
   right: Footprint,
 ): PinComparisonSummary => {
-  const pairs = matchPadsByPosition(
-    getIndexedPadGeometries(left),
-    getIndexedPadGeometries(right),
-  )
+  const leftPads = getIndexedPadGeometries(left)
+  const rightPads = getIndexedPadGeometries(right)
+  if (
+    !leftPads.some((pad) => getNumericPinNumbers(pad).length > 0) ||
+    !rightPads.some((pad) => getNumericPinNumbers(pad).length > 0)
+  ) {
+    return { pinMatchRate: 1, pinMismatches: [], pinsMatch: true }
+  }
+
+  const pairs = matchPadsByPosition(leftPads, rightPads)
   const pinMismatches: PinMismatchDetail[] = []
   let comparedPinCount = 0
   let matchedPinCount = 0
