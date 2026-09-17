@@ -472,16 +472,30 @@ export const getShapeBounds = (shape: ShapeGeometry): Bounds => {
   const halfWidth = shape.width / 2
   const halfHeight = shape.height / 2
   const radians = toRadians(shape.rotation)
-  const corners = [
-    rotatePoint(-halfWidth, -halfHeight, radians),
-    rotatePoint(halfWidth, -halfHeight, radians),
-    rotatePoint(halfWidth, halfHeight, radians),
-    rotatePoint(-halfWidth, halfHeight, radians),
-  ].map((corner) => ({
-    x: corner.x + shape.x,
-    y: corner.y + shape.y,
-  }))
-  return getSizedBounds(corners)
+  const cos = Math.abs(Math.cos(radians))
+  const sin = Math.abs(Math.sin(radians))
+  let extentX: number
+  let extentY: number
+
+  if (shape.shape === "circle") {
+    extentX = extentY = Math.min(halfWidth, halfHeight)
+  } else if (shape.shape === "ellipse") {
+    extentX = Math.hypot(halfWidth * cos, halfHeight * sin)
+    extentY = Math.hypot(halfWidth * sin, halfHeight * cos)
+  } else {
+    const radius =
+      shape.shape === "pill"
+        ? Math.min(halfWidth, halfHeight)
+        : Math.max(0, Math.min(shape.cornerRadius ?? 0, halfWidth, halfHeight))
+    // A rounded rectangle is its inset rectangle expanded by a circle.
+    extentX = (halfWidth - radius) * cos + (halfHeight - radius) * sin + radius
+    extentY = (halfWidth - radius) * sin + (halfHeight - radius) * cos + radius
+  }
+
+  return getSizedBounds([
+    { x: shape.x - extentX, y: shape.y - extentY },
+    { x: shape.x + extentX, y: shape.y + extentY },
+  ])
 }
 
 export const getShapeListBounds = (
