@@ -181,7 +181,7 @@ test("recovers the C134475 linear pill-plated row", async () => {
   })
 
   expect(result.best!.footprinterString).toBe(
-    "jst3_zh_p1.27mm_pw0.9mm_pl1.6mm_id0.7mm",
+    "jst3_p1.27mm_pw0.9mm_pl1.6mm_id0.99mm",
   )
 })
 
@@ -193,7 +193,7 @@ test("recovers the C18077930 five-pin linear pill-plated row", async () => {
   })
 
   expect(result.best!.footprinterString).toBe(
-    "jst5_zh_p1.2499mm_pw0.9mm_pl1.524mm_id0.7mm",
+    "jst5_p1.25mm_pw0.9mm_pl1.52mm_id0.96mm",
   )
 })
 

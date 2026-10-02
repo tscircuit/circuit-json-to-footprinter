@@ -150,6 +150,11 @@ const getNumericPinNumbers = (pad: IndexedPadGeometry | null) => [
   ),
 ]
 
+const getBallCoordinates = (pad: IndexedPadGeometry | null) =>
+  (pad?.element.port_hints ?? []).filter((hint) =>
+    /^[A-Z]+[1-9]\d*$/.test(hint),
+  )
+
 const matchPadsByPosition = (
   leftPads: IndexedPadGeometry[],
   rightPads: IndexedPadGeometry[],
@@ -203,11 +208,30 @@ const comparePinHints = (
   for (const [leftPad, rightPad] of pairs) {
     const leftPinNumbers = getNumericPinNumbers(leftPad)
     const rightPinNumbers = getNumericPinNumbers(rightPad)
-    if (leftPinNumbers.length === 0 && rightPinNumbers.length === 0) continue
+    const leftBalls = getBallCoordinates(leftPad)
+    const rightBalls = getBallCoordinates(rightPad)
+    if (
+      leftPinNumbers.length === 0 &&
+      rightPinNumbers.length === 0 &&
+      leftBalls.length === 0 &&
+      rightBalls.length === 0
+    )
+      continue
 
     comparedPinCount += 1
+    const hasNumericPair =
+      leftPinNumbers.length > 0 && rightPinNumbers.length > 0
+    const hasBallPair = leftBalls.length > 0 && rightBalls.length > 0
     if (
-      leftPinNumbers.some((pinNumber) => rightPinNumbers.includes(pinNumber))
+      (hasNumericPair ||
+        (leftPinNumbers.length === 0 &&
+          rightPinNumbers.length === 0 &&
+          hasBallPair)) &&
+      (!hasNumericPair ||
+        leftPinNumbers.some((pinNumber) =>
+          rightPinNumbers.includes(pinNumber),
+        )) &&
+      (!hasBallPair || leftBalls.some((ball) => rightBalls.includes(ball)))
     ) {
       matchedPinCount += 1
       continue

@@ -25,10 +25,12 @@ console.log(result.best?.footprinterString)
 ```
 
 The result includes the best self-contained footprinter string, ranked alternatives,
-geometry scores, copper/hole IoU, numeric pin matching metrics, optimized parameters,
+geometry scores, copper/hole IoU, pin matching metrics, optimized parameters,
 and search diagnostics. `pinMatchRate`, `pinsMatch`, and `pinMismatches` compare
-numeric `port_hints` on position-matched pads. Pin mismatches reduce a candidate's
-ranking score, while footprints without numeric pin hints receive no pin penalty. When a
+numeric and ball-coordinate `port_hints` on position-matched pads. When both
+are present on both pads, both must agree. Coordinate-only targets use
+coordinate-only candidates; they do not silently gain numeric aliases. Pin
+mismatches reduce a candidate's ranking score. When a
 match requires rotation, its string includes a `pin1location(...)` modifier; no
 separate `pcbRotation` is emitted. The modifier names the edge containing pin 1,
 then its alignment along that edge. For example, `pin1location(leftside,top)` means
@@ -37,6 +39,14 @@ QFN string above already has that orientation, so it needs no modifier. This is
 different from `pin1location(topside,left)`, which places pin 1 on the top edge near
 the left and cannot be produced from the RP2040 orientation by rotation alone. The
 input must contain at least one `pcb_smtpad` or `pcb_plated_hole` element.
+
+BGA discovery measures the occupied grid, including missing balls, and tries
+`pinnumbering(rowmajor)`, `pinnumbering(columnmajor)`, and
+`pinnumbering(ballcoords)` with each origin. Explicit conventions use package
+row letters that skip I, O, Q, S, X, and Z, extending through AA and beyond.
+Legacy row labels remain available for targets that use them. For example, the
+624-ball i.MX6 footprint can be represented as
+`bga624_grid25x25_p0.8mm_pad0.4mm_missing(1)_blorigin_pinnumbering(columnmajor)`.
 
 Ambiguous two-pad components use a neutral `smdpads2_...` candidate with family
 `passive` rather than implying that the component is a resistor. Explicit source

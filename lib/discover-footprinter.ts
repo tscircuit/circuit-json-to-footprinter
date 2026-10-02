@@ -3119,16 +3119,18 @@ const getSot223Seed = (target: Footprint) => {
   return undefined
 }
 
-const getBgaGridSeed = (target: Footprint) => {
+const getBgaGridSeeds = (target: Footprint): string[] => {
   const pads = getPadGeometries(target)
   if (
     pads.length < 4 ||
     pads.some(
       ({ copper, drill, element }) =>
-        element.type !== "pcb_smtpad" || drill || copper.shape !== "rect",
+        element.type !== "pcb_smtpad" ||
+        drill ||
+        (copper.shape !== "rect" && copper.shape !== "circle"),
     )
   ) {
-    return undefined
+    return []
   }
 
   const bounds = pads.map(({ copper }) => getPadBounds(copper))
@@ -3142,7 +3144,7 @@ const getBgaGridSeed = (target: Footprint) => {
         Math.abs(height - pad) > tolerance,
     )
   ) {
-    return undefined
+    return []
   }
 
   const columns = clusterCoordinates(
@@ -3156,9 +3158,9 @@ const getBgaGridSeed = (target: Footprint) => {
   if (
     columns.length < 2 ||
     rows.length < 2 ||
-    columns.length * rows.length !== pads.length
+    columns.length * rows.length < pads.length
   ) {
-    return undefined
+    return []
   }
 
   const columnPitches = columns
@@ -3167,31 +3169,59 @@ const getBgaGridSeed = (target: Footprint) => {
   const rowPitches = rows
     .slice(1)
     .map((coordinate, index) => coordinate - rows[index]!)
-  const pitch = median([...columnPitches, ...rowPitches])
+  // Supplier coordinates are often rounded independently. Estimate pitch over
+  // the full span so repeated rounding does not accumulate across large grids.
+  const pitch = median([
+    (columns.at(-1)! - columns[0]!) / (columns.length - 1),
+    (rows.at(-1)! - rows[0]!) / (rows.length - 1),
+  ])
   if (
     pitch <= pad ||
     [...columnPitches, ...rowPitches].some(
       (candidate) => Math.abs(candidate - pitch) > tolerance,
     )
   ) {
-    return undefined
+    return []
   }
 
-  for (const column of columns) {
-    for (const row of rows) {
-      if (
-        pads.filter(
-          ({ copper }) =>
-            Math.abs(copper.x - column) <= tolerance &&
-            Math.abs(copper.y - row) <= tolerance,
-        ).length !== 1
-      ) {
-        return undefined
+  const occupied = new Set<number>()
+  for (const { copper } of pads) {
+    const x = columns.findIndex(
+      (column) => Math.abs(copper.x - column) <= tolerance,
+    )
+    const y = rows.findIndex((row) => Math.abs(copper.y - row) <= tolerance)
+    const position = y * columns.length + x
+    if (x < 0 || y < 0 || occupied.has(position)) return []
+    occupied.add(position)
+  }
+
+  const shapes = new Set(pads.map(({ copper }) => copper.shape))
+  if (shapes.size !== 1) return []
+  const base = `bga${pads.length}_grid${columns.length}x${rows.length}_p${formatPreciseLength(pitch)}_pad${formatPreciseLength(pad)}`
+  const padModifier = shapes.has("rect") ? "_rectpads" : ""
+  const seeds: string[] = []
+  for (const origin of ["tl", "bl", "tr", "br"] as const) {
+    // missing() uses nominal row-major grid positions, even when populated
+    // contacts are numbered column-major. Transform the mask with the origin.
+    const missing: number[] = []
+    for (let y = 0; y < rows.length; y++) {
+      for (let x = 0; x < columns.length; x++) {
+        if (occupied.has(y * columns.length + x)) continue
+        const pinX = origin.endsWith("r") ? columns.length - 1 - x : x
+        const pinY = origin.startsWith("b") ? rows.length - 1 - y : y
+        missing.push(pinY * columns.length + pinX + 1)
       }
     }
+    missing.sort((left, right) => left - right)
+    const mask = missing.length ? `_missing(${missing.join(",")})` : ""
+    const seed = `${base}${mask}_${origin}origin${padModifier}`
+    // Retain a legacy candidate for targets using the old A-Z row alphabet.
+    seeds.push(seed)
+    for (const numbering of ["rowmajor", "columnmajor", "ballcoords"]) {
+      seeds.push(`${seed}_pinnumbering(${numbering})`)
+    }
   }
-
-  return `bga${pads.length}_grid${columns.length}x${rows.length}_p${formatPreciseLength(pitch)}_pad${formatPreciseLength(pad)}_rectpads`
+  return seeds
 }
 
 const getStaggeredSmdPinHeaderSeed = (target: Footprint) => {
@@ -3493,8 +3523,7 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
     if (family !== "usbcmidmount") seeds.add(family)
   }
 
-  const bgaGridSeed = getBgaGridSeed(target)
-  if (bgaGridSeed) seeds.add(bgaGridSeed)
+  for (const seed of getBgaGridSeeds(target)) seeds.add(seed)
 
   const staggeredSmdPinHeaderSeed = getStaggeredSmdPinHeaderSeed(target)
   if (staggeredSmdPinHeaderSeed) seeds.add(staggeredSmdPinHeaderSeed)
@@ -4235,10 +4264,11 @@ const findActiveParameters = (
   seed: SeedCandidate,
   analysis: TargetAnalysis,
 ) => {
-  // FPC analysis emits a complete parameterization from the repeated contact
-  // and mounting-pad geometry; appending duplicate generic parameters would
-  // only make the result less readable.
+  // These analyses emit complete dimensions from the measured geometry;
+  // appending duplicate generic parameters would make the result less readable.
   if (
+    (seed.family === "bga" &&
+      seed.footprinterString.includes("_pinnumbering(")) ||
     seed.family === "fpc" ||
     (seed.family === "jst" &&
       (seed.footprinterString.includes("_smd") ||
