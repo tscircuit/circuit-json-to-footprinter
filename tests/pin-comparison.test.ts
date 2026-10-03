@@ -57,3 +57,82 @@ test("identical copper with swapped pin 1 and pin 2 reports pin mismatches", () 
   expect(comparison.pinsMatch).toBe(false)
   expect(comparison.pinMismatches).toEqual(summary.pinMismatches)
 })
+
+test.each([
+  { label: "missing", portHints: undefined },
+  { label: "empty", portHints: [] },
+  { label: "nonnumeric", portHints: ["anode", "VCC"] },
+])("does not penalize a footprint with $label port hints", ({ portHints }) => {
+  const labeled = circuitJsonToFootprint([
+    pad("labeled_1", -1, 1),
+    pad("labeled_2", 1, 2),
+  ])
+  const unlabeled = circuitJsonToFootprint([
+    { ...pad("unlabeled_1", -1, 1), port_hints: portHints?.slice() },
+    { ...pad("unlabeled_2", 1, 2), port_hints: portHints?.slice() },
+  ])
+
+  for (const [left, right] of [
+    [labeled, unlabeled],
+    [unlabeled, labeled],
+  ]) {
+    const summary = summarizeCopperComparison(left, right)
+    expect(summary.copperIntersectionOverUnion).toBe(1)
+    expect(summary.pinMatchRate).toBe(1)
+    expect(summary.pinsMatch).toBe(true)
+    expect(summary.pinMismatches).toEqual([])
+
+    const comparison = compareFootprints(left, right, 8)
+    expect(comparison.iou).toBe(1)
+    expect(comparison.pinMatchRate).toBe(1)
+    expect(comparison.pinsMatch).toBe(true)
+    expect(comparison.pinMismatches).toEqual([])
+  }
+})
+
+test("still reports missing hints on partially numbered footprints", () => {
+  const left = circuitJsonToFootprint([
+    pad("left_1", -1, 1),
+    { ...pad("left_2", 1, 2), port_hints: ["thermalpad"] },
+  ])
+  const right = circuitJsonToFootprint([
+    pad("right_1", -1, 1),
+    pad("right_2", 1, 2),
+  ])
+
+  const summary = summarizeCopperComparison(left, right)
+  expect(summary.pinMatchRate).toBe(0.5)
+  expect(summary.pinsMatch).toBe(false)
+  expect(summary.pinMismatches).toEqual([
+    {
+      leftPadIndex: 1,
+      leftPinNumbers: [],
+      leftPortHints: ["thermalpad"],
+      rightPadIndex: 1,
+      rightPinNumbers: [2],
+      rightPortHints: ["pin2"],
+    },
+  ])
+})
+
+test("still reports an unmatched numbered pad", () => {
+  const left = circuitJsonToFootprint([
+    pad("left_1", -1, 1),
+    pad("left_2", 1, 2),
+  ])
+  const right = circuitJsonToFootprint([pad("right_1", -1, 1)])
+
+  const summary = summarizeCopperComparison(left, right)
+  expect(summary.pinMatchRate).toBe(0.5)
+  expect(summary.pinsMatch).toBe(false)
+  expect(summary.pinMismatches).toEqual([
+    {
+      leftPadIndex: 1,
+      leftPinNumbers: [2],
+      leftPortHints: ["pin2"],
+      rightPadIndex: null,
+      rightPinNumbers: [],
+      rightPortHints: [],
+    },
+  ])
+})
