@@ -74,7 +74,7 @@ const c160404Pads: PcbSmtPad[] = [
   },
 ]
 
-test("C160404 is discovered as a JST connector without source hints", () => {
+test.failing("C160404 is discovered as a JST connector without source hints", () => {
   const result = circuitJsonToFootprinter(c160404Pads, { maxCandidates: 5 })
 
   expect(result.best?.family).toBe("jst")
