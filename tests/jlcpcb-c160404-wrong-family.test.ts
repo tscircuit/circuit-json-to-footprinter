@@ -3,8 +3,8 @@ import type { PcbSmtPad } from "circuit-json"
 import { circuitJsonToFootprinter } from "../lib/index.js"
 
 // Network-free reproduction of the imported PCB pad geometry for JLCPCB
-// C160404 (JST SM04B-SRSS-TB(LF)(SN)). With no source metadata, discovery
-// incorrectly classifies this four-pin connector as an LED footprint.
+// C160404 (JST SM04B-SRSS-TB(LF)(SN)). Discovery should recognize this as a
+// JST connector from geometry alone, without relying on source metadata.
 const c160404Pads: PcbSmtPad[] = [
   {
     type: "pcb_smtpad",
@@ -74,12 +74,10 @@ const c160404Pads: PcbSmtPad[] = [
   },
 ]
 
-test("C160404 without source hints is incorrectly discovered as an LED", () => {
+test("C160404 is discovered as a JST connector without source hints", () => {
   const result = circuitJsonToFootprinter(c160404Pads, { maxCandidates: 5 })
 
-  expect(result.best?.family).toBe("led5050")
-  expect(result.best?.footprinterString).toBe(
-    "led5050_pin1location(rightside,bottom)",
-  )
-  expect(result.best?.copperIntersectionOverUnion).toBeLessThan(0.2)
+  expect(result.best?.family).toBe("jst")
+  expect(result.best?.footprinterString).toStartWith("jst4_smd")
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)
 })
