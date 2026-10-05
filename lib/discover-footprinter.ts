@@ -642,23 +642,6 @@ const analyzeFpcAxis = (
   const mountingAreaRatio =
     median(mountingPads.map(({ area }) => area)) /
     Math.max(median(contactPads.map(({ area }) => area)), 0.0001)
-  const description = `${target.title} ${target.subtitle} ${
-    target.sourceHints?.join(" ") ?? ""
-  }`.toLowerCase()
-  const hasFpcHint =
-    description.includes("fpc") ||
-    description.includes("ffc") ||
-    description.includes("flat flexible")
-  // Two-contact SMD connectors and some compact LEDs use the same mechanical
-  // pattern as a two-pin FPC: two central contacts and two outboard mounts.
-  const hasTwoContactWithMountsTopology = contactPads.length === 2
-  if (
-    !hasFpcHint &&
-    !hasTwoContactWithMountsTopology &&
-    (contactPads.length < 5 || mountingAreaRatio < 1.35)
-  ) {
-    return undefined
-  }
   if (mountingAreaRatio < 1.15) return undefined
 
   const mountingPadAreaDifference =
@@ -736,18 +719,8 @@ const analyzeJstSmdAxis = (
   target: Footprint,
   alongAxis: "x" | "y",
 ): JstSmdAnalysis | undefined => {
-  const description = `${target.title} ${target.subtitle} ${
-    target.sourceHints?.join(" ") ?? ""
-  }`.toLowerCase()
-  const hasConnectorHint =
-    /\bjst\b/.test(description) ||
-    /wire[- ]?to[- ]?board/.test(description) ||
-    /\bsmd\s*,?\s*p\s*=/.test(description)
-  // FPC connectors can share this topology; preserve explicit family hints.
-  if (!hasConnectorHint && /\b(?:fpc|ffc)\b|flat flexible/.test(description)) {
-    return undefined
-  }
-
+  // Geometry supplies a candidate, not a component identity. Other families
+  // with the same topology remain eligible for copper and pin comparison.
   const acrossAxis = alongAxis === "x" ? "y" : "x"
   const pads = getPadGeometries(target)
   if (
@@ -855,6 +828,19 @@ const analyzeJstSmdAxis = (
       const mountingPadLength = median(
         mountingPads.map(({ acrossSize }) => acrossSize),
       )
+      const padWidth = median(contacts.map(({ alongSize }) => alongSize))
+      // Retention pads differ from a second signal row by their span or area.
+      // Include the pitch tolerance so import noise does not turn SOT pads
+      // or a rectangular four-contact grid into a connector candidate.
+      const contactSpan = contacts.at(-1)!.along - contacts[0].along
+      const mountingSpan = mountingPads[1].along - mountingPads[0].along
+      if (
+        mountingSpan <= contactSpan + Math.max(0.05, padPitch * 0.1) &&
+        mountingPadWidth * mountingPadLength <
+          padWidth * contactAcrossSize * 1.15
+      ) {
+        continue
+      }
       const mountingRowCenter = median(mountingPads.map(({ across }) => across))
       if (
         Math.abs(mountingPads[0].across - mountingPads[1].across) >
@@ -875,19 +861,6 @@ const analyzeJstSmdAxis = (
       const mountingPadRowDistance = Math.abs(
         mountingRowCenter - contactRowCenter,
       )
-      // Without metadata, require a distinctive signal row with larger,
-      // outboard mounting pads. Four-pad layouts are too ambiguous.
-      if (
-        !hasConnectorHint &&
-        (contacts.length < 3 ||
-          mountingPadWidth <
-            median(contacts.map(({ alongSize }) => alongSize)) * 1.25 ||
-          mountingPads[0].along >= contacts[0].along ||
-          mountingPads[1].along <= contacts.at(-1)!.along ||
-          mountingPadRowDistance <= (contactAcrossSize + mountingPadLength) / 2)
-      ) {
-        continue
-      }
       if (
         mountingPadRowDistance <=
         Math.max(0.05, Math.min(contactAcrossSize, mountingPadLength) * 0.1)
@@ -920,7 +893,7 @@ const analyzeJstSmdAxis = (
         mountingPadsOnTop: mountingRowCenter > contactRowCenter,
         padLength: contactAcrossSize,
         padPitch,
-        padWidth: median(contacts.map(({ alongSize }) => alongSize)),
+        padWidth,
         pinCount: contacts.length,
       }
     }
@@ -2517,7 +2490,7 @@ const getDomainScore = (target: Footprint, family: string) => {
     dfn: ["dfn"],
     dpak: ["dpak", "to-252", "to252"],
     fpc: ["fpc", "ffc", "flat flexible"],
-    jst: ["jst", "smd p=", "smd,p=", "wire-to-board", "wire to board"],
+    jst: ["jst", "wire-to-board", "wire to board"],
     lga: ["lga"],
     passive: ["passive", "fuse", "inductor"],
     pinrow: ["pinrow", "pin row", "pin header", "terminal block", "conn-th"],
@@ -2912,7 +2885,10 @@ const getPreferredFamilies = (target: Footprint, analysis: TargetAnalysis) => {
   if (analysis.dpak) return new Set([analysis.dpak.family])
   if (analysis.smdPushButton) return new Set(["smdpushbutton"])
   if (analysis.smdSlideSwitch) return new Set(["smdslideswitch"])
-  if (analysis.jstSmd) return new Set(["jst"])
+  if (analysis.jstSmd) {
+    // A signal row with mounting pads can fit either connector definition.
+    return new Set(analysis.fpc ? ["jst", "fpc"] : ["jst"])
+  }
   if (analysis.jstThroughHole) return new Set(["jst"])
   if (isLed2835Target(target, analysis)) return new Set(["led2835"])
   if (analysis.twoPadSmd && hasMiniMelfPackageHint(target)) {
@@ -3660,6 +3636,12 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       `mpl${formatPreciseLength(mountingPadLength)}`,
     ]
     seeds.add(`jst${pinCount}_${[...flags, ...parameters].join("_")}`)
+    // Reversing a row's pin order requires the opposite mounting side before
+    // rotation. Compare both orientations instead of assuming pin 1 is left.
+    const oppositeFlags = ["smd", mountingPadsOnTop ? "" : "mounttop"].filter(
+      Boolean,
+    )
+    seeds.add(`jst${pinCount}_${[...oppositeFlags, ...parameters].join("_")}`)
   }
 
   if (analysis.jstThroughHole) {
@@ -3985,22 +3967,28 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
       mountingPadsOnTop ? "mounttop" : "",
     ].filter(Boolean)
     const parameters = [
-      `p${formatLength(padPitch)}`,
-      `pw${formatLength(padWidth)}`,
-      `pl${formatLength(padLength)}`,
+      `p${formatPreciseLength(padPitch)}`,
+      `pw${formatPreciseLength(padWidth)}`,
+      `pl${formatPreciseLength(padLength)}`,
       ...(staggered
         ? [
-            `py${formatLength(rowPitch)}`,
-            `toppl${formatLength(topPadLength)}`,
-            `bottompl${formatLength(bottomPadLength)}`,
+            `py${formatPreciseLength(rowPitch)}`,
+            `toppl${formatPreciseLength(topPadLength)}`,
+            `bottompl${formatPreciseLength(bottomPadLength)}`,
           ]
         : []),
-      `mpx${formatLength(mountingPadPitch)}`,
-      `mpy${formatLength(mountingPadRowDistance)}`,
-      `mpw${formatLength(mountingPadWidth)}`,
-      `mpl${formatLength(mountingPadLength)}`,
+      `mpx${formatPreciseLength(mountingPadPitch)}`,
+      `mpy${formatPreciseLength(mountingPadRowDistance)}`,
+      `mpw${formatPreciseLength(mountingPadWidth)}`,
+      `mpl${formatPreciseLength(mountingPadLength)}`,
     ]
     seeds.add(`fpc${pinCount}_${[...flags, ...parameters].join("_")}`)
+    const oppositeFlags = [
+      staggered ? "staggered" : "",
+      reverse ? "reverse" : "",
+      mountingPadsOnTop ? "" : "mounttop",
+    ].filter(Boolean)
+    seeds.add(`fpc${pinCount}_${[...oppositeFlags, ...parameters].join("_")}`)
   }
 
   if (quadSidePinSuffix) {

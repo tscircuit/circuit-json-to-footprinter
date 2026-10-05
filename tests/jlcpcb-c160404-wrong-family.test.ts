@@ -3,8 +3,8 @@ import type { PcbSmtPad } from "circuit-json"
 import { circuitJsonToFootprinter } from "../lib/index.js"
 
 // Network-free reproduction of the imported PCB pad geometry for JLCPCB
-// C160404 (JST SM04B-SRSS-TB(LF)(SN)). Discovery should recognize this as a
-// JST connector from geometry alone, without relying on source metadata.
+// C160404 (JST SM04B-SRSS-TB(LF)(SN)). Discovery should recover the
+// connector's copper and pin layout without relying on source metadata.
 const c160404Pads: Extract<PcbSmtPad, { shape: "rect" }>[] = [
   {
     type: "pcb_smtpad",
@@ -86,10 +86,14 @@ for (const rotation of [0, 90, 180, 270]) {
     }))
     const result = circuitJsonToFootprinter(pads, { maxCandidates: 5 })
 
-    expect(result.best?.family).toBe("jst")
-    expect(result.best?.footprinterString).toStartWith("jst4_smd")
+    // JST and FPC definitions can represent the same copper. The source's
+    // mounting-pad numbering determines which is a usable replacement.
+    expect(
+      result.candidates.some((candidate) => candidate.family === "jst"),
+    ).toBe(true)
     expect(result.best?.copperIntersectionOverUnion).toBeGreaterThanOrEqual(
       0.99,
     )
+    expect(result.best?.pinsMatch).toBe(true)
   })
 }
