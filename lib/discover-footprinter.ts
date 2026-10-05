@@ -739,11 +739,12 @@ const analyzeJstSmdAxis = (
   const description = `${target.title} ${target.subtitle} ${
     target.sourceHints?.join(" ") ?? ""
   }`.toLowerCase()
-  if (
-    !/\bjst\b/.test(description) &&
-    !/wire[- ]?to[- ]?board/.test(description) &&
-    !/\bsmd\s*,?\s*p\s*=/.test(description)
-  ) {
+  const hasConnectorHint =
+    /\bjst\b/.test(description) ||
+    /wire[- ]?to[- ]?board/.test(description) ||
+    /\bsmd\s*,?\s*p\s*=/.test(description)
+  // FPC connectors can share this topology; preserve explicit family hints.
+  if (!hasConnectorHint && /\b(?:fpc|ffc)\b|flat flexible/.test(description)) {
     return undefined
   }
 
@@ -874,6 +875,19 @@ const analyzeJstSmdAxis = (
       const mountingPadRowDistance = Math.abs(
         mountingRowCenter - contactRowCenter,
       )
+      // Without metadata, require a distinctive signal row with larger,
+      // outboard mounting pads. Four-pad layouts are too ambiguous.
+      if (
+        !hasConnectorHint &&
+        (contacts.length < 3 ||
+          mountingPadWidth <
+            median(contacts.map(({ alongSize }) => alongSize)) * 1.25 ||
+          mountingPads[0].along >= contacts[0].along ||
+          mountingPads[1].along <= contacts.at(-1)!.along ||
+          mountingPadRowDistance <= (contactAcrossSize + mountingPadLength) / 2)
+      ) {
+        continue
+      }
       if (
         mountingPadRowDistance <=
         Math.max(0.05, Math.min(contactAcrossSize, mountingPadLength) * 0.1)
