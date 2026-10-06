@@ -52,8 +52,8 @@
     "@tscircuit/core": "^0.0.1437",
     "@types/bun": "latest",
     "bun-match-svg": "^0.0.15",
-    "circuit-to-svg": "^0.0.384",
-    "easyeda": "^0.0.269",
+    "circuit-to-svg": "^0.0.444",
+    "easyeda": "^0.0.372",
     "tscircuit": "^0.0.2067",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3"
