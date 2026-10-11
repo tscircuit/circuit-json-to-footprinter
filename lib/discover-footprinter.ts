@@ -15,6 +15,7 @@ import {
   rotatePoint,
   type ShapeGeometry,
 } from "./footprint-geometry.js"
+import { getReleasedConnectorSeeds } from "./released-connector-seeds.js"
 
 const MAX_OPTIMIZED_SEEDS = 10
 const OPTIMIZATION_STEPS = 16
@@ -3524,6 +3525,7 @@ const generateSeeds = (target: Footprint, analysis: TargetAnalysis) => {
   }
 
   for (const seed of getBgaGridSeeds(target)) seeds.add(seed)
+  for (const seed of getReleasedConnectorSeeds(target)) seeds.add(seed)
 
   const staggeredSmdPinHeaderSeed = getStaggeredSmdPinHeaderSeed(target)
   if (staggeredSmdPinHeaderSeed) seeds.add(staggeredSmdPinHeaderSeed)
@@ -4270,6 +4272,8 @@ const findActiveParameters = (
     (seed.family === "bga" &&
       seed.footprinterString.includes("_pinnumbering(")) ||
     seed.family === "fpc" ||
+    seed.family === "usba" ||
+    seed.family === "usbmicro" ||
     (seed.family === "jst" &&
       (seed.footprinterString.includes("_smd") ||
         seed.footprinterString.includes("_zh")))
