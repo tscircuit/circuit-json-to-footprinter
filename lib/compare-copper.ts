@@ -28,9 +28,11 @@ const { CrossSection } = await getManifoldModule()
 
 export interface PinMismatchDetail {
   leftPadIndex: number | null
+  leftPadIndices?: number[]
   leftPinNumbers: number[]
   leftPortHints: string[]
   rightPadIndex: number | null
+  rightPadIndices?: number[]
   rightPinNumbers: number[]
   rightPortHints: string[]
 }
@@ -155,23 +157,162 @@ const getBallCoordinates = (pad: IndexedPadGeometry | null) =>
     /^[A-Z]+[1-9]\d*$/.test(hint),
   )
 
-const matchPadsByPosition = (
-  leftPads: IndexedPadGeometry[],
-  rightPads: IndexedPadGeometry[],
+interface PhysicalContact {
+  bounds: Bounds
+  pads: IndexedPadGeometry[]
+  pinNumbers: number[]
+  ballCoordinates: string[]
+  portHints: string[]
+  semanticOwner?: string
+}
+
+const getPhysicalContacts = (footprint: Footprint): PhysicalContact[] => {
+  const groups = new Map<string, IndexedPadGeometry[]>()
+  for (const pad of getIndexedPadGeometries(footprint)) {
+    const pinNumbers = getNumericPinNumbers(pad).toSorted((a, b) => a - b)
+    const ballCoordinates = getBallCoordinates(pad).toSorted()
+    // Numeric or grid identifiers identify the physical contact. Shared
+    // electrical aliases such as GND must not combine separately numbered pads.
+    const semanticOwner =
+      pinNumbers.length === 0 && ballCoordinates.length === 0
+        ? pad.element.port_hints
+            ?.find((hint) => hint.trim())
+            ?.trim()
+            .toUpperCase()
+        : undefined
+    const key =
+      pinNumbers.length || ballCoordinates.length
+        ? JSON.stringify([pinNumbers, ballCoordinates])
+        : semanticOwner
+          ? `owner:${semanticOwner}`
+          : `unlabelled:${pad.padIndex}`
+    const group = groups.get(key)
+    if (group) group.push(pad)
+    else groups.set(key, [pad])
+  }
+
+  return [...groups.values()].map((pads) => {
+    const first = pads[0]!
+    const pinNumbers = getNumericPinNumbers(first)
+    const ballCoordinates = getBallCoordinates(first)
+    return {
+      bounds: getShapeListBounds(pads.map((pad) => pad.copper)),
+      pads,
+      pinNumbers,
+      ballCoordinates,
+      portHints: [
+        ...new Set(pads.flatMap((pad) => pad.element.port_hints ?? [])),
+      ],
+      semanticOwner:
+        pinNumbers.length === 0 && ballCoordinates.length === 0
+          ? first.element.port_hints
+              ?.find((hint) => hint.trim())
+              ?.trim()
+              .toUpperCase()
+          : undefined,
+    }
+  })
+}
+
+const hasContactIdentity = (contact: PhysicalContact | null) =>
+  Boolean(
+    contact &&
+      (contact.pinNumbers.length ||
+        contact.ballCoordinates.length ||
+        contact.semanticOwner),
+  )
+
+const haveMatchingContactIdentity = (
+  left: PhysicalContact | null,
+  right: PhysicalContact | null,
 ) => {
-  const availableRight = new Set(rightPads.map((_, index) => index))
+  if (!left || !right) return false
+  const hasNumericPair =
+    left.pinNumbers.length > 0 && right.pinNumbers.length > 0
+  const hasBallPair =
+    left.ballCoordinates.length > 0 && right.ballCoordinates.length > 0
+  if (hasNumericPair || hasBallPair) {
+    return (
+      (hasNumericPair ||
+        (left.pinNumbers.length === 0 && right.pinNumbers.length === 0)) &&
+      (!hasNumericPair ||
+        left.pinNumbers.some((pin) => right.pinNumbers.includes(pin))) &&
+      (!hasBallPair ||
+        left.ballCoordinates.some((ball) =>
+          right.ballCoordinates.includes(ball),
+        ))
+    )
+  }
+  return Boolean(
+    left.semanticOwner && left.semanticOwner === right.semanticOwner,
+  )
+}
+
+const getConflictingContacts = (
+  left: PhysicalContact[],
+  right: PhysicalContact[],
+) => {
+  const conflicts = new Set<PhysicalContact>()
+  if (
+    left.every((contact) => contact.pads.length === 1) &&
+    right.every((contact) => contact.pads.length === 1)
+  )
+    return conflicts
+  for (const leftContact of left) {
+    if (!hasContactIdentity(leftContact)) continue
+    for (const rightContact of right) {
+      if (
+        (leftContact.pads.length === 1 && rightContact.pads.length === 1) ||
+        !hasContactIdentity(rightContact) ||
+        haveMatchingContactIdentity(leftContact, rightContact)
+      ) {
+        continue
+      }
+      const a = leftContact.bounds
+      const b = rightContact.bounds
+      if (
+        a.maxX <= b.minX ||
+        b.maxX <= a.minX ||
+        a.maxY <= b.minY ||
+        b.maxY <= a.minY
+      ) {
+        continue
+      }
+      // A differently segmented contact can have the same total copper while
+      // assigning one sector to another pin. Check ownership of overlapping
+      // copper, without treating ordinary pad-size differences as pin errors.
+      const comparison = compareShapesWithManifold(
+        leftContact.pads.map((pad) => pad.copper),
+        rightContact.pads.map((pad) => pad.copper),
+      )
+      if (comparison.iou > 1e-9) {
+        conflicts.add(leftContact)
+        conflicts.add(rightContact)
+      }
+    }
+  }
+  return conflicts
+}
+
+const matchContactsByPosition = (
+  leftContacts: PhysicalContact[],
+  rightContacts: PhysicalContact[],
+) => {
+  const availableRight = new Set(rightContacts.map((_, index) => index))
   const pairs: Array<
-    readonly [IndexedPadGeometry | null, IndexedPadGeometry | null]
+    readonly [PhysicalContact | null, PhysicalContact | null]
   > = []
 
-  for (const leftPad of leftPads) {
+  for (const leftContact of leftContacts) {
     let bestIndex = -1
     let bestDistance = Number.POSITIVE_INFINITY
+    const leftCenter = getBoundsCenter(leftContact.bounds)
     for (const rightIndex of availableRight) {
-      const rightPad = rightPads[rightIndex]
+      const rightContact = rightContacts[rightIndex]
+      const rightCenter = getBoundsCenter(rightContact.bounds)
       const distance = Math.hypot(
-        leftPad.copper.x - rightPad.copper.x,
-        leftPad.copper.y - rightPad.copper.y,
+        leftCenter.x - rightCenter.x,
+        leftCenter.y - rightCenter.y,
       )
       if (distance < bestDistance) {
         bestDistance = distance
@@ -180,15 +321,15 @@ const matchPadsByPosition = (
     }
 
     if (bestIndex === -1) {
-      pairs.push([leftPad, null])
+      pairs.push([leftContact, null])
       continue
     }
     availableRight.delete(bestIndex)
-    pairs.push([leftPad, rightPads[bestIndex]])
+    pairs.push([leftContact, rightContacts[bestIndex]])
   }
 
   for (const rightIndex of availableRight) {
-    pairs.push([null, rightPads[rightIndex]])
+    pairs.push([null, rightContacts[rightIndex]])
   }
   return pairs
 }
@@ -197,53 +338,40 @@ const comparePinHints = (
   left: Footprint,
   right: Footprint,
 ): PinComparisonSummary => {
-  const pairs = matchPadsByPosition(
-    getIndexedPadGeometries(left),
-    getIndexedPadGeometries(right),
-  )
+  const leftContacts = getPhysicalContacts(left)
+  const rightContacts = getPhysicalContacts(right)
+  const pairs = matchContactsByPosition(leftContacts, rightContacts)
+  const conflicts = getConflictingContacts(leftContacts, rightContacts)
   const pinMismatches: PinMismatchDetail[] = []
   let comparedPinCount = 0
   let matchedPinCount = 0
 
   for (const [leftPad, rightPad] of pairs) {
-    const leftPinNumbers = getNumericPinNumbers(leftPad)
-    const rightPinNumbers = getNumericPinNumbers(rightPad)
-    const leftBalls = getBallCoordinates(leftPad)
-    const rightBalls = getBallCoordinates(rightPad)
-    if (
-      leftPinNumbers.length === 0 &&
-      rightPinNumbers.length === 0 &&
-      leftBalls.length === 0 &&
-      rightBalls.length === 0
-    )
-      continue
+    if (!hasContactIdentity(leftPad) && !hasContactIdentity(rightPad)) continue
 
     comparedPinCount += 1
-    const hasNumericPair =
-      leftPinNumbers.length > 0 && rightPinNumbers.length > 0
-    const hasBallPair = leftBalls.length > 0 && rightBalls.length > 0
     if (
-      (hasNumericPair ||
-        (leftPinNumbers.length === 0 &&
-          rightPinNumbers.length === 0 &&
-          hasBallPair)) &&
-      (!hasNumericPair ||
-        leftPinNumbers.some((pinNumber) =>
-          rightPinNumbers.includes(pinNumber),
-        )) &&
-      (!hasBallPair || leftBalls.some((ball) => rightBalls.includes(ball)))
+      haveMatchingContactIdentity(leftPad, rightPad) &&
+      !conflicts.has(leftPad!) &&
+      !conflicts.has(rightPad!)
     ) {
       matchedPinCount += 1
       continue
     }
 
     pinMismatches.push({
-      leftPadIndex: leftPad?.padIndex ?? null,
-      leftPinNumbers,
-      leftPortHints: leftPad?.element.port_hints ?? [],
-      rightPadIndex: rightPad?.padIndex ?? null,
-      rightPinNumbers,
-      rightPortHints: rightPad?.element.port_hints ?? [],
+      leftPadIndex: leftPad?.pads[0]?.padIndex ?? null,
+      ...(leftPad && leftPad.pads.length > 1
+        ? { leftPadIndices: leftPad.pads.map((pad) => pad.padIndex) }
+        : {}),
+      leftPinNumbers: leftPad?.pinNumbers ?? [],
+      leftPortHints: leftPad?.portHints ?? [],
+      rightPadIndex: rightPad?.pads[0]?.padIndex ?? null,
+      ...(rightPad && rightPad.pads.length > 1
+        ? { rightPadIndices: rightPad.pads.map((pad) => pad.padIndex) }
+        : {}),
+      rightPinNumbers: rightPad?.pinNumbers ?? [],
+      rightPortHints: rightPad?.portHints ?? [],
     })
   }
 
