@@ -15,6 +15,7 @@ import {
   rotatePoint,
   type ShapeGeometry,
 } from "./footprint-geometry.js"
+import { getQfnGridSeeds } from "./qfn-grid-seeds.js"
 import { getReleasedConnectorSeeds } from "./released-connector-seeds.js"
 
 const MAX_OPTIMIZED_SEEDS = 10
@@ -4269,6 +4270,9 @@ const findActiveParameters = (
   // These analyses emit complete dimensions from the measured geometry;
   // appending duplicate generic parameters would make the result less readable.
   if (
+    (seed.family === "qfn" &&
+      seed.footprinterString.includes("_grid") &&
+      seed.footprinterString.includes("_px")) ||
     (seed.family === "bga" &&
       seed.footprinterString.includes("_pinnumbering(")) ||
     seed.family === "fpc" ||
@@ -4517,7 +4521,10 @@ export const discoverFootprinterString = (
   const analysis = analyzeTarget(target)
   const hintedPassiveFamily = getHintedPassiveFamily(target)
   const hintedPassiveSize = getHintedPassiveSize(target, analysis)
-  const rawSeeds = generateSeeds(target, analysis)
+  const measuredQfnSeeds = new Set(getQfnGridSeeds(target))
+  const rawSeeds = [
+    ...new Set([...generateSeeds(target, analysis), ...measuredQfnSeeds]),
+  ]
   const seedCandidates = rawSeeds.flatMap((footprinterString) => {
     const baseUnrotatedFootprint = tryBuild(footprinterString)
     if (
@@ -4533,11 +4540,13 @@ export const discoverFootprinterString = (
         analysis.centeredCourtyard,
         searchRotation,
       )
-      const offsetFootprinterString = addThermalPadOffsetForRotation(
-        courtyardSizedFootprinterString,
-        analysis.thermalPad,
-        searchRotation,
-      )
+      const offsetFootprinterString = measuredQfnSeeds.has(footprinterString)
+        ? courtyardSizedFootprinterString
+        : addThermalPadOffsetForRotation(
+            courtyardSizedFootprinterString,
+            analysis.thermalPad,
+            searchRotation,
+          )
       const unrotatedFootprint =
         offsetFootprinterString === footprinterString
           ? baseUnrotatedFootprint
