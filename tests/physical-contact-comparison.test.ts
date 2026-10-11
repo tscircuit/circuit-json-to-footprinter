@@ -1,12 +1,16 @@
 import { expect, test } from "bun:test"
-import type { PcbSmtPad, Point } from "circuit-json"
+import type { PcbSmtPad, PcbSmtPadRect, Point } from "circuit-json"
 import {
   circuitJsonToFootprint,
   compareFootprints,
   summarizeCopperComparison,
 } from "../lib/index.js"
 
-const rectangle = (id: string, x: number, portHints: string[]): PcbSmtPad => ({
+const rectangle = (
+  id: string,
+  x: number,
+  portHints: string[],
+): PcbSmtPadRect => ({
   type: "pcb_smtpad",
   pcb_smtpad_id: id,
   shape: "rect",
@@ -149,4 +153,74 @@ test("pad-size differences remain a copper metric rather than a pin mismatch", (
   )
   expect(summary.copperIntersectionOverUnion).toBeLessThan(1)
   expect(summary.pinsMatch).toBe(true)
+})
+
+const dividedContact = (leftHints: string[], rightHints: string[]) =>
+  circuitJsonToFootprint([
+    { ...rectangle("left_half", -0.25, leftHints), width: 0.5 },
+    { ...rectangle("right_half", 0.25, rightHints), width: 0.5 },
+  ])
+
+test("functional aliases do not divide a numeric physical contact", () => {
+  const whole = circuitJsonToFootprint([rectangle("whole", 0, ["1"])])
+  const divided = dividedContact(["1"], ["1", "GPIO9"])
+  for (const [left, right] of [
+    [whole, divided],
+    [divided, whole],
+  ]) {
+    expect(summarizeCopperComparison(left, right)).toEqual({
+      copperIntersectionOverUnion: 1,
+      holeIntersectionOverUnion: 1,
+      pinMatchRate: 1,
+      pinsMatch: true,
+      pinMismatches: [],
+    })
+  }
+
+  const wrong = circuitJsonToFootprint([rectangle("wrong", 0, ["2"])])
+  expect(summarizeCopperComparison(wrong, divided).pinMismatches).toEqual([
+    expect.objectContaining({
+      rightPinNumbers: [1],
+      rightPortHints: ["1", "GPIO9"],
+      rightPadIndices: [0, 1],
+    }),
+  ])
+})
+
+test("duplicate coordinate hints do not divide a physical contact", () => {
+  const whole = circuitJsonToFootprint([rectangle("whole", 0, ["AA3"])])
+  const divided = dividedContact(["AA3"], ["AA3", "AA3"])
+  for (const [left, right] of [
+    [whole, divided],
+    [divided, whole],
+  ]) {
+    expect(summarizeCopperComparison(left, right)).toEqual({
+      copperIntersectionOverUnion: 1,
+      holeIntersectionOverUnion: 1,
+      pinMatchRate: 1,
+      pinsMatch: true,
+      pinMismatches: [],
+    })
+  }
+})
+
+test("primary coordinate owners tolerate extra functional aliases", () => {
+  const whole = circuitJsonToFootprint([rectangle("whole", 0, ["AA3"])])
+  const divided = dividedContact(["AA3"], ["AA3", "GPIO9"])
+  expect(summarizeCopperComparison(whole, divided).pinsMatch).toBe(true)
+  expect(summarizeCopperComparison(divided, whole).pinsMatch).toBe(true)
+})
+
+test("a numeric owner does not hide a changed coordinate claim on one sector", () => {
+  const whole = circuitJsonToFootprint([rectangle("whole", 0, ["1", "AA3"])])
+  const divided = dividedContact(["1", "AA3"], ["1", "AA4"])
+  for (const [left, right] of [
+    [whole, divided],
+    [divided, whole],
+  ]) {
+    const summary = summarizeCopperComparison(left, right)
+    expect(summary.copperIntersectionOverUnion).toBe(1)
+    expect(summary.pinsMatch).toBe(false)
+    expect(summary.pinMatchRate).toBe(0)
+  }
 })

@@ -152,16 +152,20 @@ const getNumericPinNumbers = (pad: IndexedPadGeometry | null) => [
   ),
 ]
 
-const getBallCoordinates = (pad: IndexedPadGeometry | null) =>
-  (pad?.element.port_hints ?? []).filter((hint) =>
-    /^[A-Z]+[1-9]\d*$/.test(hint),
-  )
+const getBallCoordinates = (pad: IndexedPadGeometry | null) => [
+  ...new Set(
+    (pad?.element.port_hints ?? []).filter((hint) =>
+      /^[A-Z]+[1-9]\d*$/.test(hint),
+    ),
+  ),
+]
 
 interface PhysicalContact {
   bounds: Bounds
   pads: IndexedPadGeometry[]
   pinNumbers: number[]
   ballCoordinates: string[]
+  ballCoordinateClaims: string[][]
   portHints: string[]
   semanticOwner?: string
 }
@@ -169,8 +173,8 @@ interface PhysicalContact {
 const getPhysicalContacts = (footprint: Footprint): PhysicalContact[] => {
   const groups = new Map<string, IndexedPadGeometry[]>()
   for (const pad of getIndexedPadGeometries(footprint)) {
-    const pinNumbers = getNumericPinNumbers(pad).toSorted((a, b) => a - b)
-    const ballCoordinates = getBallCoordinates(pad).toSorted()
+    const pinNumbers = getNumericPinNumbers(pad)
+    const ballCoordinates = getBallCoordinates(pad)
     // Numeric or grid identifiers identify the physical contact. Shared
     // electrical aliases such as GND must not combine separately numbered pads.
     const semanticOwner =
@@ -180,9 +184,10 @@ const getPhysicalContacts = (footprint: Footprint): PhysicalContact[] => {
             ?.trim()
             .toUpperCase()
         : undefined
-    const key =
-      pinNumbers.length || ballCoordinates.length
-        ? JSON.stringify([pinNumbers, ballCoordinates])
+    const key = pinNumbers.length
+      ? `pin:${pinNumbers[0]}`
+      : ballCoordinates.length
+        ? `coordinate:${ballCoordinates[0]}`
         : semanticOwner
           ? `owner:${semanticOwner}`
           : `unlabelled:${pad.padIndex}`
@@ -193,13 +198,16 @@ const getPhysicalContacts = (footprint: Footprint): PhysicalContact[] => {
 
   return [...groups.values()].map((pads) => {
     const first = pads[0]!
-    const pinNumbers = getNumericPinNumbers(first)
-    const ballCoordinates = getBallCoordinates(first)
+    const pinNumbers = [...new Set(pads.flatMap(getNumericPinNumbers))]
+    const ballCoordinates = [...new Set(pads.flatMap(getBallCoordinates))]
     return {
       bounds: getShapeListBounds(pads.map((pad) => pad.copper)),
       pads,
       pinNumbers,
       ballCoordinates,
+      ballCoordinateClaims: pads
+        .map(getBallCoordinates)
+        .filter((hints) => hints.length),
       portHints: [
         ...new Set(pads.flatMap((pad) => pad.element.port_hints ?? [])),
       ],
@@ -238,9 +246,12 @@ const haveMatchingContactIdentity = (
       (!hasNumericPair ||
         left.pinNumbers.some((pin) => right.pinNumbers.includes(pin))) &&
       (!hasBallPair ||
-        left.ballCoordinates.some((ball) =>
-          right.ballCoordinates.includes(ball),
-        ))
+        (left.ballCoordinateClaims.every((claims) =>
+          claims.some((ball) => right.ballCoordinates.includes(ball)),
+        ) &&
+          right.ballCoordinateClaims.every((claims) =>
+            claims.some((ball) => left.ballCoordinates.includes(ball)),
+          )))
     )
   }
   return Boolean(
