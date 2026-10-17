@@ -62,6 +62,23 @@ const rotatedCircuitJsonFromFootprinter = (
   )
 }
 
+test("discovers unlabeled copper without a pin mismatch penalty", () => {
+  const circuitJson = circuitJsonFromFootprinter("0603").map((element) =>
+    element.type === "pcb_smtpad"
+      ? { ...element, port_hints: undefined }
+      : element,
+  )
+  const result = circuitJsonToFootprinter(circuitJson, { maxCandidates: 3 })
+
+  expect(result.candidates.length).toBeGreaterThan(0)
+  expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.99)
+  for (const candidate of result.candidates) {
+    expect(candidate.pinMatchRate).toBe(1)
+    expect(candidate.pinsMatch).toBe(true)
+    expect(candidate.pinMismatches).toEqual([])
+  }
+})
+
 test("recovers a parameterized dual-row footprint", () => {
   const result = circuitJsonToFootprinter(
     circuitJsonFromFootprinter("soic8_p1.1mm_w6.2mm_pw0.55mm_pl1.4mm"),
