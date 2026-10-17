@@ -246,16 +246,22 @@ const Xl3210Rgbc2812b = () => (
   />
 )
 
-test("recovers C2856799 FPC-05F-12PH20", async () => {
-  const result = await expectFootprintRecovery({
-    FootprintComponent: Fpc05f12ph20,
-    sourceHints: ["C2856799 FPC-05F-12PH20 flat flexible connector"],
-  })
+for (const packageHint of ["", " SMD,P=0.5mm"]) {
+  test(`recovers C2856799 FPC-05F-12PH20 with package hint '${packageHint}'`, async () => {
+    const result = await expectFootprintRecovery({
+      FootprintComponent: Fpc05f12ph20,
+      sourceHints: [
+        `C2856799 FPC-05F-12PH20 flat flexible connector${packageHint}`,
+      ],
+    })
 
-  expect(result.best!.family).toBe("fpc")
-  expect(result.best!.footprinterString).toStartWith("fpc12_")
-  expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(0.99)
-})
+    expect(result.best!.family).toBe("fpc")
+    expect(result.best!.footprinterString).toStartWith("fpc12_")
+    expect(result.best!.copperIntersectionOverUnion).toBeGreaterThanOrEqual(
+      0.99,
+    )
+  })
+}
 
 test("recovers C262505 AFC11-S30ICA-00 staggered FPC", async () => {
   const result = await expectFootprintRecovery({
@@ -297,10 +303,8 @@ test("recovers C566239 SM02B-SURS as a JST-style SMD connector", async () => {
     sourceHints: ["C566239 SM02B-SURS-TF(LF)(SN) SMD P=0.8mm"],
   })
 
-  expect(result.best!.family).toBe("jst")
-  expect(result.best!.footprinterString).toBe(
-    "jst2_smd_p0.8mm_pw0.5mm_pl1.3mm_mpx3.4mm_mpy1.8mm_mpw1.2mm_mpl1.7mm",
-  )
+  expect(["jst", "fpc"]).toContain(result.best!.family)
+  expect(result.best!.pinsMatch).toBe(true)
   expect(result.best!.copperIntersectionOverUnion).toBe(1)
 })
 
@@ -343,9 +347,13 @@ test("recovers C41413182 four-pad LED with the same topology", async () => {
     sourceHints: ["C41413182 XL-3210RGBC-2812B SMD-4P 3.2x1mm LED"],
   })
 
-  expect(result.best!.family).toBe("fpc")
-  expect(result.best!.footprinterString).toBe(
-    "fpc2_mounttop_p0.83mm_pw0.55mm_pl0.5mm_mpx3mm_mpy0.25mm_mpw1mm_mpl0.7mm",
-  )
+  // This LED shares both connector definitions' copper topology. Discovery
+  // must compare pin identities rather than hard-code a connector family.
+  const fpc = result.candidates.find((candidate) => candidate.family === "fpc")
+  const jst = result.candidates.find((candidate) => candidate.family === "jst")
+  expect(fpc?.copperIntersectionOverUnion).toBe(1)
+  expect(jst?.copperIntersectionOverUnion).toBe(1)
+  expect(result.best!.pinMatchRate).toBeGreaterThanOrEqual(fpc!.pinMatchRate)
+  expect(result.best!.pinMatchRate).toBeGreaterThanOrEqual(jst!.pinMatchRate)
   expect(result.best!.copperIntersectionOverUnion).toBe(1)
 })

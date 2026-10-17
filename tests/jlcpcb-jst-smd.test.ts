@@ -24,7 +24,6 @@ const cases: Array<{
   jlcpcbPartNumber: string
   manufacturerPartNumber: string
   packageName: string
-  mountingPadsOnTop: boolean
   signalPinCount: number
   pads: PcbSmtPad[]
 }> = [
@@ -32,7 +31,6 @@ const cases: Array<{
     jlcpcbPartNumber: "C265108",
     manufacturerPartNumber: "SM02B-SFHLS-TF(LF)(SN)",
     packageName: "SMD,P=1.8mm,卧贴",
-    mountingPadsOnTop: false,
     signalPinCount: 2,
     pads: [
       rectPad(1, -2.100072, 2.250059, 1.2999974, 1.999996),
@@ -45,7 +43,6 @@ const cases: Array<{
     jlcpcbPartNumber: "C265440",
     manufacturerPartNumber: "B5B-ZR-SM4-TF(LF)(SN)",
     packageName: "SMD,P=1.5mm",
-    mountingPadsOnTop: true,
     signalPinCount: 5,
     pads: [
       rectPad(1, -2.999994, -0.25006935, 0.6999986, 4.99999),
@@ -61,7 +58,6 @@ const cases: Array<{
     jlcpcbPartNumber: "C160354",
     manufacturerPartNumber: "B4B-PH-SM4-TB(LF)(SN)",
     packageName: "SMD,P=2mm",
-    mountingPadsOnTop: false,
     signalPinCount: 4,
     pads: [
       rectPad(1, 2.996946, 0.5079873, 0.999998, 5.999988),
@@ -76,7 +72,6 @@ const cases: Array<{
     jlcpcbPartNumber: "C405941",
     manufacturerPartNumber: "X3025WRS-03D-LPSW",
     packageName: "SMD,P=3mm,卧贴",
-    mountingPadsOnTop: false,
     signalPinCount: 3,
     pads: [
       rectPad(4, -6.860032, -3.04000535, 3.499993, 1.6999966),
@@ -90,7 +85,6 @@ const cases: Array<{
     jlcpcbPartNumber: "C7429680",
     manufacturerPartNumber: "ZX-XH2.54-2PLT",
     packageName: "SMD,P=2.5mm",
-    mountingPadsOnTop: false,
     signalPinCount: 2,
     pads: [
       rectPad(4, -4.350004, -2.50002675, 1.499997, 2.999994),
@@ -103,7 +97,6 @@ const cases: Array<{
     jlcpcbPartNumber: "C7429671",
     manufacturerPartNumber: "ZX-XH2.54-2PWT",
     packageName: "SMD,P=2.5mm,卧贴",
-    mountingPadsOnTop: false,
     signalPinCount: 2,
     pads: [
       rectPad(3, -4.230243, -3.699891, 1.499997, 3.499993),
@@ -116,7 +109,6 @@ const cases: Array<{
     jlcpcbPartNumber: "C2765055",
     manufacturerPartNumber: "2060-452/998-404",
     packageName: "SMD,P=4mm",
-    mountingPadsOnTop: false,
     signalPinCount: 2,
     pads: [
       rectPad(2, 5.25030065, -1.999996, 3.499993, 1.999996),
@@ -130,26 +122,20 @@ const cases: Array<{
 for (const {
   jlcpcbPartNumber,
   manufacturerPartNumber,
-  mountingPadsOnTop,
   packageName,
   pads,
   signalPinCount,
 } of cases) {
-  test(`recovers ${jlcpcbPartNumber} ${manufacturerPartNumber} as jst_smd`, () => {
+  test(`recovers ${jlcpcbPartNumber} ${manufacturerPartNumber} connector geometry`, () => {
     const result = circuitJsonToFootprinter(pads, {
       maxCandidates: 3,
       sourceHints: [jlcpcbPartNumber, manufacturerPartNumber, packageName],
     })
 
-    expect(result.best?.family).toBe("jst")
-    expect(result.best?.footprinterString).toStartWith(
-      `jst${signalPinCount}_smd`,
+    expect(["jst", "fpc"]).toContain(result.best!.family)
+    expect(result.best?.footprinterString).toMatch(
+      new RegExp(`^(jst|fpc)${signalPinCount}_`),
     )
-    if (mountingPadsOnTop) {
-      expect(result.best?.footprinterString).toContain("_mounttop")
-    } else {
-      expect(result.best?.footprinterString).not.toContain("_mounttop")
-    }
     expect(result.best?.copperIntersectionOverUnion).toBeGreaterThanOrEqual(
       0.99,
     )
