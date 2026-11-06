@@ -365,6 +365,48 @@ test("builds a dimensioned diode seed for JLCPCB-style pads", () => {
   expect(result.best?.copperIntersectionOverUnion).toBeGreaterThan(0.999)
 })
 
+test("extracts rectangular courtyard outlines with collinear edge vertices and ignores non-rectangular corner outlines", () => {
+  const pad = circuitJsonFromFootprinter("0402")[0]
+  const withCollinearEdgePoint = circuitJsonToFootprint([
+    pad,
+    {
+      type: "pcb_courtyard_outline",
+      pcb_courtyard_outline_id: "courtyard_collinear",
+      pcb_component_id: "pcb_component_1",
+      layer: "top",
+      outline: [
+        { x: -2, y: 1.25 },
+        { x: 0, y: 1.25 },
+        { x: 2, y: 1.25 },
+        { x: 2, y: -1.25 },
+        { x: -2, y: -1.25 },
+      ],
+    },
+  ])
+  expect(withCollinearEdgePoint.courtyard).toEqual({
+    center: { x: 0, y: 0 },
+    width: 4,
+    height: 2.5,
+  })
+
+  const closedTriangleOnCorners = circuitJsonToFootprint([
+    pad,
+    {
+      type: "pcb_courtyard_outline",
+      pcb_courtyard_outline_id: "courtyard_triangle",
+      pcb_component_id: "pcb_component_1",
+      layer: "top",
+      outline: [
+        { x: -2, y: -1.25 },
+        { x: 2, y: -1.25 },
+        { x: -2, y: 1.25 },
+        { x: -2, y: -1.25 },
+      ],
+    },
+  ])
+  expect(closedTriangleOnCorners.courtyard).toBeUndefined()
+})
+
 test("uses a neutral passive footprint for an inductor", () => {
   const result = circuitJsonToFootprinter(
     circuitJsonWithSourceComponentType(

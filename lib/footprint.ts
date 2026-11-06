@@ -8,7 +8,7 @@ import type {
   PcbSmtPad,
   PcbVia,
 } from "circuit-json"
-import { validatePcbPad } from "./footprint-geometry.js"
+import { getPolygonArea, validatePcbPad } from "./footprint-geometry.js"
 
 export interface Footprint {
   courtyard?: {
@@ -96,18 +96,52 @@ const getAxisAlignedCourtyard = (
     const maxX = Math.max(...xs)
     const minY = Math.min(...ys)
     const maxY = Math.max(...ys)
-    const isCorner = ({ x, y }: { x: number; y: number }) =>
-      (Math.abs(x - minX) < 0.00001 || Math.abs(x - maxX) < 0.00001) &&
-      (Math.abs(y - minY) < 0.00001 || Math.abs(y - maxY) < 0.00001)
-    if (maxX <= minX || maxY <= minY || !element.outline.every(isCorner)) {
+    const width = maxX - minX
+    const height = maxY - minY
+    const isEdgeOnPerimeter = (
+      current: { x: number; y: number },
+      next: { x: number; y: number },
+    ) => {
+      const withinBounds = (p: { x: number; y: number }) =>
+        p.x >= minX - 0.00001 &&
+        p.x <= maxX + 0.00001 &&
+        p.y >= minY - 0.00001 &&
+        p.y <= maxY + 0.00001
+      if (!withinBounds(current) || !withinBounds(next)) return false
+      const onVerticalSide =
+        (Math.abs(current.x - minX) < 0.00001 &&
+          Math.abs(next.x - minX) < 0.00001) ||
+        (Math.abs(current.x - maxX) < 0.00001 &&
+          Math.abs(next.x - maxX) < 0.00001)
+      const onHorizontalSide =
+        (Math.abs(current.y - minY) < 0.00001 &&
+          Math.abs(next.y - minY) < 0.00001) ||
+        (Math.abs(current.y - maxY) < 0.00001 &&
+          Math.abs(next.y - maxY) < 0.00001)
+      return onVerticalSide || onHorizontalSide
+    }
+    const allEdgesOnPerimeter = element.outline.every((point, index) =>
+      isEdgeOnPerimeter(
+        point,
+        element.outline[(index + 1) % element.outline.length],
+      ),
+    )
+    const expectedArea = width * height
+    if (
+      width <= 0 ||
+      height <= 0 ||
+      !allEdgesOnPerimeter ||
+      Math.abs(getPolygonArea(element.outline) - expectedArea) >
+        Math.max(0.0001, expectedArea * 0.0001)
+    ) {
       return []
     }
 
     return [
       {
         center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
-        width: maxX - minX,
-        height: maxY - minY,
+        width,
+        height,
       },
     ]
   })
