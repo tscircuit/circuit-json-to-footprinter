@@ -44,6 +44,14 @@ const isPcbHole = (element: AnyCircuitElement): element is PcbHole =>
 const isPcbVia = (element: AnyCircuitElement): element is PcbVia =>
   element.type === "pcb_via"
 
+const getPinNumberFromHints = (hints: readonly string[] | undefined) => {
+  for (const hint of hints ?? []) {
+    const match = hint.trim().match(/^(?:pin)?(\d+)$/i)
+    if (match?.[1]) return Number.parseInt(match[1], 10)
+  }
+  return undefined
+}
+
 const getAxisAlignedCourtyard = (
   circuitJson: readonly AnyCircuitElement[],
   pads: Array<PcbSmtPad | PcbPlatedHole>,
@@ -165,7 +173,46 @@ export const circuitJsonToFootprint = (
   circuitJson: readonly AnyCircuitElement[],
   options: CircuitJsonToFootprintOptions = {},
 ): Footprint => {
-  const pads = circuitJson.filter(isPcbPad)
+  const sourcePorts = circuitJson.filter(
+    (element) => element.type === "source_port",
+  )
+  const pcbPortsById = new Map(
+    circuitJson.flatMap((element) =>
+      element.type === "pcb_port" ? [[element.pcb_port_id, element]] : [],
+    ),
+  )
+  const pads = circuitJson.filter(isPcbPad).map((pad) => {
+    const linkedPcbPort = pad.pcb_port_id
+      ? pcbPortsById.get(pad.pcb_port_id)
+      : undefined
+    const pinNumber = getPinNumberFromHints(pad.port_hints)
+    const sourcePort =
+      (linkedPcbPort?.source_port_id
+        ? sourcePorts.find(
+            (port) => port.source_port_id === linkedPcbPort.source_port_id,
+          )
+        : undefined) ??
+      (pinNumber !== undefined
+        ? sourcePorts.find(
+            (port) =>
+              port.pin_number === pinNumber ||
+              getPinNumberFromHints([port.name, ...(port.port_hints ?? [])]) ===
+                pinNumber,
+          )
+        : undefined)
+    if (!sourcePort) return pad
+
+    return {
+      ...pad,
+      port_hints: [
+        ...new Set([
+          ...(pad.port_hints ?? []),
+          sourcePort.name,
+          ...(sourcePort.port_hints ?? []),
+        ]),
+      ],
+    }
+  })
   const holes = circuitJson.filter(isPcbHole)
   const vias = circuitJson.filter(isPcbVia)
 
