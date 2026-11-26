@@ -41,10 +41,10 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@tscircuit/footprinter": "0.0.437",
+    "@tscircuit/footprinter": "0.0.451",
     "@tscircuit/manifold-2d": "^0.0.8",
     "@tscircuit/math-utils": "^0.0.36",
-    "circuit-json": "^0.0.515",
+    "circuit-json": "^0.0.562",
     "format-si-unit": "^0.0.14"
   },
   "devDependencies": {
