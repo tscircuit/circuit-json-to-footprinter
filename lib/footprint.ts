@@ -96,10 +96,28 @@ const getAxisAlignedCourtyard = (
     const maxX = Math.max(...xs)
     const minY = Math.min(...ys)
     const maxY = Math.max(...ys)
-    const isCorner = ({ x, y }: { x: number; y: number }) =>
-      (Math.abs(x - minX) < 0.00001 || Math.abs(x - maxX) < 0.00001) &&
-      (Math.abs(y - minY) < 0.00001 || Math.abs(y - maxY) < 0.00001)
-    if (maxX <= minX || maxY <= minY || !element.outline.every(isCorner)) {
+    const isClose = (left: number, right: number) =>
+      Math.abs(left - right) < 0.00001
+    const isOnBoundary = ({ x, y }: { x: number; y: number }) =>
+      isClose(x, minX) ||
+      isClose(x, maxX) ||
+      isClose(y, minY) ||
+      isClose(y, maxY)
+    const hasCorner = (x: number, y: number) =>
+      element.outline.some(
+        (point) => isClose(point.x, x) && isClose(point.y, y),
+      )
+    const hasAllCorners =
+      hasCorner(minX, minY) &&
+      hasCorner(minX, maxY) &&
+      hasCorner(maxX, minY) &&
+      hasCorner(maxX, maxY)
+    if (
+      maxX <= minX ||
+      maxY <= minY ||
+      !element.outline.every(isOnBoundary) ||
+      !hasAllCorners
+    ) {
       return []
     }
 
