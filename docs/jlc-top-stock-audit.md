@@ -18,15 +18,15 @@ non-zero when any copper IoU is below 95%.
 
 ## 2026-07-13 snapshot
 
-| Category | Part | Stock | Package | Best result | Copper IoU | Decision |
-| --- | --- | ---: | --- | --- | ---: | --- |
-| Microcontrollers | C8734 STM32F103C8T6 | 214,596 | LQFP-48(7x7) | `qfn48_p0.4999mm_h10.1999mm_pw0.27mm_pl1.5mm` | 97.62% | Meets 95% threshold |
-| LDOs | C347215 HT7533S | 103,933 | SOT-23 | `ssop3_p1.1414mm_w2.201mm_pw0.7189mm_pl1.2838mm` | 22.61% | Propose SOT row-span and rotation support |
-| USB-C connectors | C2765186 TYPE-C 16PIN 2MD(073) | 735,053 | SMD | no candidate | 0% | Propose a USB-C family |
-| Switches | C318884 TS-1187A-B-A-B | 918,009 | SMD-4P,5.1x5.1mm | `dfn4_p3.6998mm_w7mm_pw0.75mm` | 100% | Fixed by lower-quartile pitch inference |
-| Gyroscopes | C967633 LSM6DS3TR-C | 47,071 | LGA-14(2.5x3) | `qfn14_p0.4878mm_w3.3692mm_h2.8921mm_pw0.2804mm_pl0.6759mm` | 37.14% | Propose centered 4/3 LGA side distribution |
-| MOSFETs | C22446827 L2N7002SLLT1G | 12,704,503 | SOT-23 | `dfn3_p1.2354mm_w3.3267mm_pw0.5172mm_pl1.0665mm` | 12.08% | Propose SOT row-span and rotation support |
-| ADCs | C6705483 HX711 | 113,004 | SOP-16 | `ssop16_w3.6825mm_pw0.9735mm_pl0.5567mm` | 14.89% | Propose global rotation and pill pads |
+| Category         | Part                           |      Stock | Package          | Best result                                                 | Copper IoU | Decision                                   |
+| ---------------- | ------------------------------ | ---------: | ---------------- | ----------------------------------------------------------- | ---------: | ------------------------------------------ |
+| Microcontrollers | C8734 STM32F103C8T6            |    214,596 | LQFP-48(7x7)     | `qfn48_p0.4999mm_h10.1999mm_pw0.27mm_pl1.5mm`               |     97.62% | Meets 95% threshold                        |
+| LDOs             | C347215 HT7533S                |    103,933 | SOT-23           | `ssop3_p1.1414mm_w2.201mm_pw0.7189mm_pl1.2838mm`            |     22.61% | Propose SOT row-span and rotation support  |
+| USB-C connectors | C2765186 TYPE-C 16PIN 2MD(073) |    735,053 | SMD              | no candidate                                                |         0% | Propose a USB-C family                     |
+| Switches         | C318884 TS-1187A-B-A-B         |    918,009 | SMD-4P,5.1x5.1mm | `dfn4_p3.6998mm_w7mm_pw0.75mm`                              |       100% | Fixed by lower-quartile pitch inference    |
+| Gyroscopes       | C967633 LSM6DS3TR-C            |     47,071 | LGA-14(2.5x3)    | `qfn14_p0.4878mm_w3.3692mm_h2.8921mm_pw0.2804mm_pl0.6759mm` |     37.14% | Propose centered 4/3 LGA side distribution |
+| MOSFETs          | C22446827 L2N7002SLLT1G        | 12,704,503 | SOT-23           | `dfn3_p1.2354mm_w3.3267mm_pw0.5172mm_pl1.0665mm`            |     12.08% | Propose SOT row-span and rotation support  |
+| ADCs             | C6705483 HX711                 |    113,004 | SOP-16           | `ssop16_w3.6825mm_pw0.9735mm_pl0.5567mm`                    |     14.89% | Propose global rotation and pill pads      |
 
 The highest-stock global non-passive two-pad parts sampled separately—C2286,
 C84256, C7420372, and C965799—already recover at 100% copper IoU through the
